@@ -1,0 +1,1 @@
+io.mo.mnblocker.XposedEntry

@@ -1,0 +1,1071 @@
+package io.mo.mnblocker;
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Bundle;
+import android.text.TextUtils;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.CheckBox;
+import android.widget.CompoundButton;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.Switch;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import org.json.JSONObject;
+
+import java.text.Collator;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+/**
+ * Configuration UI.
+ *
+ * Modernized programmatic layout.
+ */
+public final class MainActivity extends Activity
+{
+    private static final int SORT_BY_APP = 0;
+    private static final int SORT_BY_ALPHA = 1;
+    private static final String KEY_UI_ONLY_MATCHED = "ui_only_matched";
+
+    private static final int COLOR_BG = 0xFFF6F7FB;
+    private static final int COLOR_CARD = 0xFFFFFFFF;
+    private static final int COLOR_TEXT = 0xFF172033;
+    private static final int COLOR_SUB = 0xFF6D7484;
+    private static final int COLOR_LINE = 0xFFE7EAF0;
+    private static final int COLOR_PRIMARY = 0xFF3F6DF6;
+    private static final int COLOR_PRIMARY_DARK = 0xFF254FD8;
+    private static final int COLOR_DANGER = 0xFFC62828;
+    private static final int COLOR_SUCCESS = 0xFF2E7D32;
+    private static final int COLOR_WARN_BG = 0xFFFFF5DD;
+    private static final int COLOR_WARN_TEXT = 0xFF9A5B00;
+
+    private EditText rulesInput;
+    private Switch masterSwitch;
+    private Switch matchDescSwitch;
+    private TextView statusView;
+    private TextView listHeader;
+    private TextView batchHint;
+    private Switch onlyMatchedSwitch;
+    private LinearLayout listContainer;
+    private Button sortButton;
+    private Button multiSelectButton;
+    private Button selectAllButton;
+
+    private final List<ChannelRecord> channels = new ArrayList<>();
+    private final Map<String, Boolean> overrides = new HashMap<>();
+    private final Set<String> selected = new LinkedHashSet<>();
+    private int sortMode = SORT_BY_APP;
+    private boolean multiSelectMode;
+
+    private final Collator zhCollator = Collator.getInstance(Locale.CHINA);
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState)
+    {
+        super.onCreate(savedInstanceState);
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(COLOR_BG);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(18), dp(16), dp(20));
+        scroll.addView(root, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        root.addView(heroCard());
+        root.addView(globalCard());
+        root.addView(rulesCard());
+        root.addView(channelCard());
+
+        setContentView(scroll);
+
+        loadSwitchesAndRules();
+        reloadChannelsAndOverrides();
+        renderList();
+    }
+
+    private View heroCard()
+    {
+        LinearLayout card = cardLayout();
+        card.setBackground(roundBg(COLOR_PRIMARY, dp(22)));
+        card.setPadding(dp(18), dp(18), dp(18), dp(16));
+
+        LinearLayout header = rowLayout();
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView badge = new TextView(this);
+        badge.setText("LSPosed Module");
+        badge.setTextColor(0xFFEFF3FF);
+        badge.setTextSize(11);
+        badge.setTypeface(Typeface.DEFAULT_BOLD);
+        badge.setGravity(Gravity.CENTER);
+        badge.setPadding(dp(10), dp(4), dp(10), dp(4));
+        badge.setBackground(roundBg(0x33FFFFFF, dp(999)));
+        header.addView(badge, wrapParams());
+
+        View spacer = new View(this);
+        header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+
+        ImageButton aboutButton = new ImageButton(this);
+        aboutButton.setImageResource(R.drawable.ic_about);
+        aboutButton.setColorFilter(Color.WHITE);
+        aboutButton.setBackground(roundBg(0x33FFFFFF, dp(999)));
+        aboutButton.setContentDescription("关于");
+        aboutButton.setPadding(dp(8), dp(8), dp(8), dp(8));
+        aboutButton.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
+        header.addView(aboutButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        card.addView(header);
+
+        TextView title = new TextView(this);
+        title.setText("营销通知拦截器");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(24);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setPadding(0, dp(12), 0, dp(4));
+        card.addView(title);
+
+        TextView desc = new TextView(this);
+        desc.setText("通过正则与单独覆盖规则，精细控制 App 通知类别。");
+        desc.setTextColor(0xFFE7ECFF);
+        desc.setTextSize(13);
+        desc.setLineSpacing(dp(2), 1.0f);
+        card.addView(desc);
+
+        statusView = new TextView(this);
+        statusView.setTextSize(12);
+        statusView.setTextColor(Color.WHITE);
+        statusView.setPadding(dp(12), dp(10), dp(12), dp(10));
+        statusView.setBackground(roundBg(0x22FFFFFF, dp(14)));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(14);
+        card.addView(statusView, lp);
+
+        return card;
+    }
+
+    private View globalCard()
+    {
+        LinearLayout card = cardLayout();
+        card.addView(sectionTitle("全局开关", "控制 Hook 是否工作，以及是否匹配通知类别描述。"));
+
+        masterSwitch = cleanSwitch("启用拦截", "总开关关闭后，Hook 不再拦截通知类别。");
+        masterSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
+        card.addView(masterSwitch);
+
+        card.addView(divider());
+
+        matchDescSwitch = cleanSwitch("匹配描述文本", "同时检查通知类别 description，命中更完整。 ");
+        matchDescSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
+        card.addView(matchDescSwitch);
+
+        return card;
+    }
+
+    private View rulesCard()
+    {
+        LinearLayout card = cardLayout();
+        card.addView(sectionTitle("正则规则", "每行一条规则，支持 id / 名称 / 描述匹配。"));
+
+        TextView hint = new TextView(this);
+        hint.setText("示例：\n.*营销.*\n.*(推广|促销|优惠).*\n^ads?_.*");
+        hint.setTextColor(COLOR_SUB);
+        hint.setTextSize(12);
+        hint.setPadding(dp(12), dp(10), dp(12), dp(10));
+        hint.setBackground(roundStrokeBg(0xFFF8FAFF, dp(14), COLOR_LINE, 1));
+        card.addView(hint);
+
+        rulesInput = new EditText(this);
+        rulesInput.setMinLines(5);
+        rulesInput.setGravity(Gravity.TOP | Gravity.START);
+        rulesInput.setTextSize(13);
+        rulesInput.setTextColor(COLOR_TEXT);
+        rulesInput.setHint("输入正则规则，一行一个");
+        rulesInput.setHintTextColor(0xFFB0B6C3);
+        rulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
+        rulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+
+        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        inputLp.topMargin = dp(12);
+        card.addView(rulesInput, inputLp);
+
+        Button saveRules = primaryButton("保存规则与开关");
+        saveRules.setOnClickListener(v -> onSaveRules());
+
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(46));
+        btnLp.topMargin = dp(12);
+        card.addView(saveRules, btnLp);
+
+        return card;
+    }
+
+    private View channelCard()
+    {
+        LinearLayout card = cardLayout();
+        card.addView(sectionTitle("已检测到的通知类别", "列表来自 system_server 中 Hook 记录的实时数据。"));
+
+        listHeader = new TextView(this);
+        listHeader.setTextSize(12);
+        listHeader.setTextColor(COLOR_SUB);
+        listHeader.setPadding(0, 0, 0, dp(8));
+        card.addView(listHeader);
+
+        onlyMatchedSwitch = cleanSwitch("仅显示正则命中的类别", "关闭后会显示 Hook 记录到的全部通知类别。 ");
+        onlyMatchedSwitch.setOnCheckedChangeListener((b, v) ->
+        {
+            prefs().edit().putBoolean(KEY_UI_ONLY_MATCHED, v).apply();
+            selected.clear();
+            renderList();
+        });
+        card.addView(onlyMatchedSwitch);
+
+        LinearLayout toolbar1 = rowLayout();
+        toolbar1.setPadding(0, dp(10), 0, 0);
+
+        Button refreshButton = softButton("刷新");
+        refreshButton.setOnClickListener(v ->
+        {
+            reloadChannelsAndOverrides();
+            renderList();
+            Toast.makeText(this, "已刷新", Toast.LENGTH_SHORT).show();
+        });
+        toolbar1.addView(refreshButton, equalWeightWithGap(true));
+
+        sortButton = softButton("排序");
+        sortButton.setOnClickListener(v ->
+        {
+            sortMode = (sortMode == SORT_BY_APP) ? SORT_BY_ALPHA : SORT_BY_APP;
+            renderList();
+        });
+        toolbar1.addView(sortButton, equalWeightWithGap(true));
+
+        multiSelectButton = softButton("多选");
+        multiSelectButton.setOnClickListener(v ->
+        {
+            multiSelectMode = !multiSelectMode;
+            selected.clear();
+            renderList();
+        });
+        toolbar1.addView(multiSelectButton, equalWeightWithGap(false));
+        card.addView(toolbar1);
+
+        LinearLayout toolbar2 = rowLayout();
+        toolbar2.setPadding(0, dp(8), 0, 0);
+
+        Button blockAll = dangerButton("批量拦截");
+        blockAll.setOnClickListener(v -> batchSet(true));
+        toolbar2.addView(blockAll, equalWeightWithGap(true));
+
+        Button allowAll = successButton("批量允许");
+        allowAll.setOnClickListener(v -> batchSet(false));
+        toolbar2.addView(allowAll, equalWeightWithGap(true));
+
+        selectAllButton = softButton("全选/清空");
+        selectAllButton.setOnClickListener(v ->
+        {
+            List<ChannelRecord> visible = visibleChannels();
+            if (selected.size() < visible.size())
+            {
+                for (ChannelRecord r : visible)
+                {
+                    selected.add(r.key());
+                }
+            }
+            else
+            {
+                selected.clear();
+            }
+            renderList();
+        });
+        toolbar2.addView(selectAllButton, equalWeightWithGap(false));
+        card.addView(toolbar2);
+
+        batchHint = new TextView(this);
+        batchHint.setTextSize(12);
+        batchHint.setTextColor(COLOR_SUB);
+        batchHint.setPadding(dp(12), dp(8), dp(12), dp(8));
+        batchHint.setBackground(roundBg(0xFFF8FAFF, dp(12)));
+
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        hintLp.topMargin = dp(10);
+        card.addView(batchHint, hintLp);
+
+        listContainer = new LinearLayout(this);
+        listContainer.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        listLp.topMargin = dp(8);
+        card.addView(listContainer, listLp);
+
+        return card;
+    }
+
+    @SuppressWarnings("deprecation")
+    private SharedPreferences prefs()
+    {
+        try
+        {
+            return getSharedPreferences(RegexConfig.PREFS_NAME, Context.MODE_WORLD_READABLE);
+        }
+        catch (SecurityException e)
+        {
+            return getSharedPreferences(RegexConfig.PREFS_NAME, Context.MODE_PRIVATE);
+        }
+    }
+
+    private void loadSwitchesAndRules()
+    {
+        SharedPreferences sp = prefs();
+        boolean master = sp.getBoolean(RegexConfig.KEY_MASTER_ENABLED, true);
+        boolean matchDesc = sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
+        String rules = sp.getString(RegexConfig.KEY_RULES, "");
+
+        ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
+        if (disk.hasValue)
+        {
+            master = disk.masterEnabled;
+            matchDesc = disk.matchDescription;
+            rules = disk.rules;
+        }
+
+        setCheckedSilently(masterSwitch, master);
+        setCheckedSilently(matchDescSwitch, matchDesc);
+        setCheckedSilently(onlyMatchedSwitch, sp.getBoolean(KEY_UI_ONLY_MATCHED, true));
+        rulesInput.setText(rules);
+        refreshStatus();
+    }
+
+    private void persistSwitches()
+    {
+        prefs().edit()
+                .putBoolean(RegexConfig.KEY_MASTER_ENABLED, masterSwitch.isChecked())
+                .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
+                .apply();
+        persistConfigFile(false);
+        refreshStatus();
+    }
+
+    private void onSaveRules()
+    {
+        String rules = rulesInput.getText().toString();
+        for (String line : rules.split("\\r?\\n"))
+        {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#"))
+            {
+                continue;
+            }
+            try
+            {
+                Pattern.compile(t);
+            }
+            catch (Exception e)
+            {
+                Toast.makeText(this, "正则有误：" + t, Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+
+        boolean ok = prefs().edit()
+                .putBoolean(RegexConfig.KEY_MASTER_ENABLED, masterSwitch.isChecked())
+                .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
+                .putString(RegexConfig.KEY_RULES, rules)
+                .commit();
+        boolean bridgeOk = persistConfigFile(false);
+
+        Toast.makeText(this,
+                ok && bridgeOk ? "已保存并同步到 Hook" : "已保存到本地，但同步到 Hook 失败，请检查 root 授权",
+                Toast.LENGTH_LONG).show();
+        refreshStatus();
+        renderList();
+    }
+
+    private void reloadChannelsAndOverrides()
+    {
+        channels.clear();
+        channels.addAll(DetectedChannelsStore.readAllFromDiskForApp());
+
+        overrides.clear();
+        ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
+        String json = disk.hasValue
+                ? disk.overrides
+                : prefs().getString(RegexConfig.KEY_OVERRIDES, "");
+        if (!TextUtils.isEmpty(json))
+        {
+            try
+            {
+                JSONObject o = new JSONObject(json);
+                for (java.util.Iterator<String> it = o.keys(); it.hasNext(); )
+                {
+                    String k = it.next();
+                    overrides.put(k, o.optBoolean(k, false));
+                }
+            }
+            catch (Throwable ignored)
+            {
+            }
+        }
+
+        selected.retainAll(keySet());
+        refreshStatus();
+    }
+
+    private void persistOverrides()
+    {
+        JSONObject o = new JSONObject();
+        try
+        {
+            for (Map.Entry<String, Boolean> e : overrides.entrySet())
+            {
+                o.put(e.getKey(), e.getValue());
+            }
+        }
+        catch (Throwable ignored)
+        {
+        }
+        prefs().edit().putString(RegexConfig.KEY_OVERRIDES, o.toString()).apply();
+        persistConfigFile(false);
+    }
+
+    private boolean persistConfigFile(boolean showToast)
+    {
+        boolean ok = ConfigFileStore.writeFromApp(
+                masterSwitch != null && masterSwitch.isChecked(),
+                matchDescSwitch == null || matchDescSwitch.isChecked(),
+                rulesInput == null ? "" : rulesInput.getText().toString(),
+                overridesJson());
+        if (!ok && showToast)
+        {
+            Toast.makeText(this, "同步到 /data/system/mnblocker/config.json 失败，请检查 root 授权", Toast.LENGTH_LONG).show();
+        }
+        return ok;
+    }
+
+    private String overridesJson()
+    {
+        JSONObject o = new JSONObject();
+        try
+        {
+            for (Map.Entry<String, Boolean> e : overrides.entrySet())
+            {
+                o.put(e.getKey(), e.getValue());
+            }
+        }
+        catch (Throwable ignored)
+        {
+        }
+        return o.toString();
+    }
+
+    private void renderList()
+    {
+        sortButton.setText(sortMode == SORT_BY_APP ? "按应用" : "按字母");
+        multiSelectButton.setText(multiSelectMode ? "多选中" : "多选");
+        selectAllButton.setEnabled(multiSelectMode);
+        selectAllButton.setAlpha(multiSelectMode ? 1.0f : 0.45f);
+
+        List<ChannelRecord> visible = visibleChannels();
+
+        if (multiSelectMode)
+        {
+            batchHint.setText("多选模式：批量按钮仅作用于已勾选的 " + selected.size() + " 项");
+        }
+        else
+        {
+            batchHint.setText("普通模式：批量按钮作用于当前显示的 " + visible.size() + " 项");
+        }
+
+        listContainer.removeAllViews();
+
+        if (visible.isEmpty())
+        {
+            TextView empty = new TextView(this);
+            empty.setText(channels.isEmpty()
+                    ? "暂无数据。等待 App 创建通知类别后点刷新；若仍为空，请确认 root 读取权限。"
+                    : "当前没有正则命中的类别。可关闭“仅显示正则命中的类别”查看全部。 ");
+            empty.setTextSize(12);
+            empty.setTextColor(COLOR_SUB);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(14), dp(22), dp(14), dp(22));
+            empty.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
+            listContainer.addView(empty);
+            listHeader.setText("显示 0 个 · 已记录 " + channels.size() + " 个");
+            return;
+        }
+
+        List<ChannelRecord> sorted = new ArrayList<>(visible);
+        Collections.sort(sorted, comparator());
+
+        listHeader.setText("显示 " + sorted.size() + " 个 · 已记录 " + channels.size()
+                + " 个 · 当前显示中 " + countBlocked(sorted) + " 个处于拦截状态");
+
+        String lastApp = null;
+        for (ChannelRecord r : sorted)
+        {
+            if (sortMode == SORT_BY_APP && !r.pkg.equals(lastApp))
+            {
+                lastApp = r.pkg;
+                listContainer.addView(appGroupHeader(r.pkg));
+            }
+            listContainer.addView(channelRow(r));
+        }
+    }
+
+    private Comparator<ChannelRecord> comparator()
+    {
+        if (sortMode == SORT_BY_APP)
+        {
+            return (a, b) ->
+            {
+                int c = a.pkg.compareToIgnoreCase(b.pkg);
+                if (c != 0)
+                {
+                    return c;
+                }
+                return zhCollator.compare(displayName(a), displayName(b));
+            };
+        }
+
+        return (a, b) ->
+        {
+            int c = zhCollator.compare(displayName(a), displayName(b));
+            if (c != 0)
+            {
+                return c;
+            }
+            return a.pkg.compareToIgnoreCase(b.pkg);
+        };
+    }
+
+    private TextView appGroupHeader(String pkg)
+    {
+        TextView t = new TextView(this);
+        t.setText(pkg);
+        t.setTextSize(11);
+        t.setTextColor(COLOR_SUB);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setPadding(dp(2), dp(14), dp(2), dp(6));
+        return t;
+    }
+
+    private View channelRow(ChannelRecord r)
+    {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(10), dp(10));
+        row.setBackground(roundStrokeBg(Color.WHITE, dp(16), COLOR_LINE, 1));
+
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.bottomMargin = dp(8);
+        row.setLayoutParams(rowLp);
+
+        final String key = r.key();
+        final boolean blocked = effectiveBlocked(r);
+
+        if (multiSelectMode)
+        {
+            CheckBox cb = new CheckBox(this);
+            cb.setChecked(selected.contains(key));
+            cb.setOnCheckedChangeListener((b, checked) ->
+            {
+                if (checked)
+                {
+                    selected.add(key);
+                }
+                else
+                {
+                    selected.remove(key);
+                }
+                batchHint.setText("多选模式：批量按钮仅作用于已勾选的 " + selected.size() + " 项");
+            });
+            row.addView(cb);
+        }
+
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setPadding(multiSelectMode ? 0 : dp(2), 0, dp(8), 0);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1f);
+        text.setLayoutParams(tlp);
+
+        TextView nameView = new TextView(this);
+        nameView.setText(displayName(r));
+        nameView.setTextSize(14);
+        nameView.setTextColor(COLOR_TEXT);
+        nameView.setTypeface(Typeface.DEFAULT_BOLD);
+        text.addView(nameView);
+
+        TextView metaView = new TextView(this);
+        metaView.setText(r.pkg + "  ·  id=" + (TextUtils.isEmpty(r.id) ? "—" : r.id));
+        metaView.setTextSize(10);
+        metaView.setTextColor(COLOR_SUB);
+        metaView.setSingleLine(true);
+        metaView.setEllipsize(TextUtils.TruncateAt.END);
+        metaView.setPadding(0, dp(3), 0, dp(3));
+        text.addView(metaView);
+
+        TextView statusLine = new TextView(this);
+        Boolean ov = overrides.get(key);
+        boolean matchedNow = uiRegexMatched(r);
+        String src = (ov != null)
+                ? "单独覆盖"
+                : (matchedNow ? "正则命中" : "正则未命中");
+        statusLine.setText(src + "  ·  当前：" + (blocked ? "拦截" : "允许"));
+        statusLine.setTextSize(10);
+        statusLine.setTextColor(blocked ? COLOR_DANGER : COLOR_SUCCESS);
+        statusLine.setTypeface(Typeface.DEFAULT_BOLD);
+        text.addView(statusLine);
+
+        row.addView(text);
+
+        Switch sw = new Switch(this);
+        sw.setChecked(blocked);
+        sw.setOnCheckedChangeListener((CompoundButton b, boolean checked) ->
+        {
+            overrides.put(key, checked);
+            persistOverrides();
+            statusLine.setText("单独覆盖  ·  当前：" + (checked ? "拦截" : "允许"));
+            statusLine.setTextColor(checked ? COLOR_DANGER : COLOR_SUCCESS);
+            List<ChannelRecord> visible = visibleChannels();
+            listHeader.setText("显示 " + visible.size() + " 个 · 已记录 " + channels.size()
+                    + " 个 · 当前显示中 " + countBlocked(visible) + " 个处于拦截状态");
+        });
+        row.addView(sw);
+
+        if (multiSelectMode)
+        {
+            row.setOnClickListener(v ->
+            {
+                if (selected.contains(key))
+                {
+                    selected.remove(key);
+                }
+                else
+                {
+                    selected.add(key);
+                }
+                renderList();
+            });
+        }
+
+        return row;
+    }
+
+    private void batchSet(boolean block)
+    {
+        Set<String> targets;
+        if (multiSelectMode)
+        {
+            if (selected.isEmpty())
+            {
+                Toast.makeText(this, "请先勾选要操作的类别", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            targets = new LinkedHashSet<>(selected);
+        }
+        else
+        {
+            targets = visibleKeySet();
+            if (targets.isEmpty())
+            {
+                Toast.makeText(this, "列表为空", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
+
+        for (String k : targets)
+        {
+            overrides.put(k, block);
+        }
+
+        persistOverrides();
+        renderList();
+        Toast.makeText(this,
+                (block ? "已拦截 " : "已允许 ") + targets.size() + " 项",
+                Toast.LENGTH_SHORT).show();
+    }
+
+    private boolean effectiveBlocked(ChannelRecord r)
+    {
+        Boolean ov = overrides.get(r.key());
+        return (ov != null) ? ov : uiRegexMatched(r);
+    }
+
+    private int countBlocked(List<ChannelRecord> list)
+    {
+        int n = 0;
+        for (ChannelRecord r : list)
+        {
+            if (effectiveBlocked(r))
+            {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private List<ChannelRecord> visibleChannels()
+    {
+        if (onlyMatchedSwitch == null || !onlyMatchedSwitch.isChecked())
+        {
+            return new ArrayList<>(channels);
+        }
+
+        List<ChannelRecord> out = new ArrayList<>();
+        for (ChannelRecord r : channels)
+        {
+            if (uiRegexMatched(r))
+            {
+                out.add(r);
+            }
+        }
+        return out;
+    }
+
+    private Set<String> visibleKeySet()
+    {
+        Set<String> s = new LinkedHashSet<>();
+        for (ChannelRecord r : visibleChannels())
+        {
+            s.add(r.key());
+        }
+        return s;
+    }
+
+    private Set<String> keySet()
+    {
+        Set<String> s = new LinkedHashSet<>();
+        for (ChannelRecord r : channels)
+        {
+            s.add(r.key());
+        }
+        return s;
+    }
+
+    private boolean uiRegexMatched(ChannelRecord r)
+    {
+        List<Pattern> patterns = compileUiPatterns();
+        for (Pattern p : patterns)
+        {
+            if (matches(p, r.id) || matches(p, r.name))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<Pattern> compileUiPatterns()
+    {
+        List<Pattern> out = new ArrayList<>();
+        try
+        {
+            out.add(Pattern.compile(".*营销.*"));
+        }
+        catch (PatternSyntaxException ignored)
+        {
+        }
+
+        String rules = rulesInput == null ? "" : rulesInput.getText().toString();
+        for (String line : rules.split("\\r?\\n"))
+        {
+            String t = line.trim();
+            if (t.isEmpty() || t.startsWith("#"))
+            {
+                continue;
+            }
+            try
+            {
+                out.add(Pattern.compile(t));
+            }
+            catch (PatternSyntaxException ignored)
+            {
+            }
+        }
+        return out;
+    }
+
+    private static boolean matches(Pattern p, String s)
+    {
+        if (TextUtils.isEmpty(s))
+        {
+            return false;
+        }
+        try
+        {
+            return p.matcher(s).matches() || p.matcher(s).find();
+        }
+        catch (Throwable t)
+        {
+            return false;
+        }
+    }
+
+    private static String displayName(ChannelRecord r)
+    {
+        if (!TextUtils.isEmpty(r.name))
+        {
+            return r.name;
+        }
+        if (!TextUtils.isEmpty(r.id))
+        {
+            return r.id;
+        }
+        return "(无名称)";
+    }
+
+    private void refreshStatus()
+    {
+        if (statusView == null)
+        {
+            return;
+        }
+
+        boolean safeMode = SafetyManager.flagExists();
+        String state = safeMode
+                ? "⚠ 安全模式已触发，Hook 已停用"
+                : (masterSwitch != null && masterSwitch.isChecked() ? "正常运行" : "总开关已关闭");
+
+        String rules = prefs().getString(RegexConfig.KEY_RULES, "");
+        int count = 0;
+        if (!TextUtils.isEmpty(rules))
+        {
+            for (String l : rules.split("\\r?\\n"))
+            {
+                if (!l.trim().isEmpty() && !l.trim().startsWith("#"))
+                {
+                    count++;
+                }
+            }
+        }
+
+        statusView.setText("状态：" + state
+                + "\n自定义正则：" + count + " 条 · 内置默认：1 条 · 单独覆盖：" + overrides.size() + " 项");
+
+        if (safeMode)
+        {
+            statusView.setTextColor(COLOR_WARN_TEXT);
+            statusView.setBackground(roundBg(COLOR_WARN_BG, dp(14)));
+        }
+        else
+        {
+            statusView.setTextColor(Color.WHITE);
+            statusView.setBackground(roundBg(0x22FFFFFF, dp(14)));
+        }
+    }
+
+    private LinearLayout cardLayout()
+    {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(16), dp(16), dp(16), dp(16));
+        card.setBackground(roundBg(COLOR_CARD, dp(22)));
+        card.setElevation(dp(2));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(14);
+        card.setLayoutParams(lp);
+        return card;
+    }
+
+    private View sectionTitle(String title, String desc)
+    {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(0, 0, 0, dp(12));
+
+        TextView titleView = new TextView(this);
+        titleView.setText(title);
+        titleView.setTextSize(17);
+        titleView.setTextColor(COLOR_TEXT);
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(titleView);
+
+        TextView descView = new TextView(this);
+        descView.setText(desc);
+        descView.setTextSize(12);
+        descView.setTextColor(COLOR_SUB);
+        descView.setPadding(0, dp(4), 0, 0);
+        box.addView(descView);
+
+        return box;
+    }
+
+    private Switch cleanSwitch(String title, String sub)
+    {
+        Switch sw = new Switch(this);
+        sw.setText(title + "\n" + sub);
+        sw.setTextSize(13);
+        sw.setTextColor(COLOR_TEXT);
+        sw.setPadding(0, dp(8), 0, dp(8));
+        return sw;
+    }
+
+    private View divider()
+    {
+        View v = new View(this);
+        v.setBackgroundColor(COLOR_LINE);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                1);
+        lp.topMargin = dp(4);
+        lp.bottomMargin = dp(4);
+        v.setLayoutParams(lp);
+        return v;
+    }
+
+    private Button primaryButton(String text)
+    {
+        Button b = baseButton(text);
+        b.setTextColor(Color.WHITE);
+        b.setBackground(roundBg(COLOR_PRIMARY, dp(14)));
+        return b;
+    }
+
+    private Button softButton(String text)
+    {
+        Button b = baseButton(text);
+        b.setTextColor(COLOR_PRIMARY_DARK);
+        b.setBackground(roundBg(0xFFEFF3FF, dp(14)));
+        return b;
+    }
+
+    private Button dangerButton(String text)
+    {
+        Button b = baseButton(text);
+        b.setTextColor(Color.WHITE);
+        b.setBackground(roundBg(0xFFE53935, dp(14)));
+        return b;
+    }
+
+    private Button successButton(String text)
+    {
+        Button b = baseButton(text);
+        b.setTextColor(Color.WHITE);
+        b.setBackground(roundBg(0xFF43A047, dp(14)));
+        return b;
+    }
+
+    private Button baseButton(String text)
+    {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setGravity(Gravity.CENTER);
+        b.setMinHeight(0);
+        b.setMinWidth(0);
+        b.setPadding(dp(8), 0, dp(8), 0);
+        return b;
+    }
+
+    private LinearLayout rowLayout()
+    {
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.HORIZONTAL);
+        return l;
+    }
+
+    private LinearLayout.LayoutParams equalWeightWithGap(boolean hasRightGap)
+    {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0,
+                dp(42),
+                1f);
+        if (hasRightGap)
+        {
+            lp.rightMargin = dp(8);
+        }
+        return lp;
+    }
+
+    private LinearLayout.LayoutParams wrapParams()
+    {
+        return new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
+    private GradientDrawable roundBg(int color, int radius)
+    {
+        GradientDrawable gd = new GradientDrawable();
+        gd.setColor(color);
+        gd.setCornerRadius(radius);
+        return gd;
+    }
+
+    private GradientDrawable roundStrokeBg(int color, int radius, int strokeColor, int strokeWidth)
+    {
+        GradientDrawable gd = roundBg(color, radius);
+        gd.setStroke(strokeWidth, strokeColor);
+        return gd;
+    }
+
+    private void setCheckedSilently(Switch sw, boolean checked)
+    {
+        sw.setOnCheckedChangeListener(null);
+        sw.setChecked(checked);
+        if (sw == onlyMatchedSwitch)
+        {
+            sw.setOnCheckedChangeListener((b, v) ->
+            {
+                prefs().edit().putBoolean(KEY_UI_ONLY_MATCHED, v).apply();
+                selected.clear();
+                renderList();
+            });
+        }
+        else
+        {
+            sw.setOnCheckedChangeListener((b, v) -> persistSwitches());
+        }
+    }
+
+    private int dp(int v)
+    {
+        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+    }
+}
