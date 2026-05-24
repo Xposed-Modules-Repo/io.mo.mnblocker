@@ -8,10 +8,13 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
@@ -80,11 +83,22 @@ public final class MainActivity extends Activity
     private boolean multiSelectMode;
 
     private final Collator zhCollator = Collator.getInstance(Locale.CHINA);
+    private FrameLayout rootFrame;
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
+
+        // Repair dir ownership + check root in one background thread.
+        new Thread(() -> {
+            boolean hasRoot = ShellUtils.fixDirPermissions();
+            if (!hasRoot) {
+                runOnUiThread(() -> showFadeHint("未授权 root 权限，模块可能无法正常运行"));
+            }
+        }).start();
+
+        rootFrame = new FrameLayout(this);
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -102,7 +116,11 @@ public final class MainActivity extends Activity
         root.addView(rulesCard());
         root.addView(channelCard());
 
-        setContentView(scroll);
+        rootFrame.addView(scroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        setContentView(rootFrame);
 
         loadSwitchesAndRules();
         reloadChannelsAndOverrides();
@@ -1062,6 +1080,38 @@ public final class MainActivity extends Activity
         {
             sw.setOnCheckedChangeListener((b, v) -> persistSwitches());
         }
+    }
+
+    /**
+     * Show a hint anchored near the bottom of the screen that fades out
+     * after 2 seconds.
+     */
+    private void showFadeHint(String text)
+    {
+        android.widget.TextView hint = new android.widget.TextView(this);
+        hint.setText(text);
+        hint.setTextColor(android.graphics.Color.WHITE);
+        hint.setTextSize(14);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(dp(24), dp(12), dp(24), dp(12));
+        hint.setBackground(roundBg(0xCC333333, dp(24)));
+        hint.setAlpha(1f);
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        lp.bottomMargin = dp(80);
+
+        rootFrame.addView(hint, lp);
+
+        new Handler(Looper.getMainLooper()).postDelayed(() ->
+                hint.animate()
+                        .alpha(0f)
+                        .setDuration(800)
+                        .withEndAction(() -> rootFrame.removeView(hint))
+                        .start(),
+                2000);
     }
 
     private int dp(int v)

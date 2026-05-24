@@ -45,6 +45,12 @@ final class HookLogger {
             d.setExecutable(true, false);
             //noinspection ResultOfMethodCallIgnored
             d.setReadable(true, false);
+            // World-writable so system_server (UID 1000) can create files even
+            // if the directory was initially created by root via su.
+            // This call succeeds when we are the owner, and silently fails
+            // (returns false) otherwise — which is fine as a best-effort fix.
+            //noinspection ResultOfMethodCallIgnored
+            d.setWritable(true, false);
         } catch (Throwable ignored) {
         }
     }
@@ -61,6 +67,18 @@ final class HookLogger {
         write("E", msg, t);
     }
 
+    /**
+     * Check if the debug_logging flag file exists. When absent (the default),
+     * file-based logging is skipped — only XposedBridge.log is written.
+     */
+    private static boolean isFileLoggingEnabled() {
+        try {
+            return new File(DIR + "/debug_logging").exists();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private static synchronized void write(String level, String msg, Throwable t) {
         String line = TS.format(new Date()) + " " + level + "/ " + msg;
 
@@ -73,7 +91,10 @@ final class HookLogger {
         } catch (Throwable ignored) {
         }
 
-        // 2) Best-effort file log.
+        // 2) File log only when the debug_logging flag file exists.
+        if (!isFileLoggingEnabled()) {
+            return;
+        }
         try {
             rotateIfNeeded();
             StringBuilder sb = new StringBuilder(line);
