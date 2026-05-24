@@ -10,8 +10,8 @@ android {
         applicationId "io.mo.mnblocker"
         minSdk 24            // Android 7.0 — NotificationChannel API starts at 26, lower kept for legacy install
         targetSdk 34
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "1.1.0"
     }
 
     buildTypes {

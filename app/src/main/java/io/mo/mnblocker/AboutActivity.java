@@ -26,6 +26,10 @@ public final class AboutActivity extends Activity
     private static final int COLOR_LINK = 0xFF254FD8;
     private static final String SOURCE_URL = "https://github.com/lm060719/io.mo.mnblocker";
 
+    /** Hidden debug entrance: tap the icon or name 5 times. */
+    private int tapCount;
+    private long lastTapTime;
+
     @Override
     protected void onCreate(Bundle savedInstanceState)
     {
@@ -60,6 +64,7 @@ public final class AboutActivity extends Activity
         icon.setImageResource(R.drawable.app_icon);
         icon.setContentDescription(getString(R.string.app_name));
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        icon.setOnClickListener(v -> onSecretTap());
         box.addView(icon, new LinearLayout.LayoutParams(dp(96), dp(96)));
 
         TextView name = new TextView(this);
@@ -68,6 +73,7 @@ public final class AboutActivity extends Activity
         name.setTextSize(24);
         name.setTypeface(Typeface.DEFAULT_BOLD);
         name.setGravity(Gravity.CENTER);
+        name.setOnClickListener(v -> onSecretTap());
         LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -86,6 +92,21 @@ public final class AboutActivity extends Activity
         box.addView(version, versionLp);
 
         return box;
+    }
+
+    private void onSecretTap()
+    {
+        long now = System.currentTimeMillis();
+        if (now - lastTapTime > 2000) {
+            tapCount = 0;
+        }
+        lastTapTime = now;
+        tapCount++;
+
+        if (tapCount >= 5) {
+            tapCount = 0;
+            startActivity(new Intent(this, DebugActivity.class));
+        }
     }
 
     private View descriptionCard()
