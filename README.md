@@ -1,5 +1,7 @@
 # MarketingNotificationBlocker
 
+[简体中文](https://github.com/lm060719/io.mo.mnblocker/blob/main/README_zh.md) | English
+
 A lightweight, high-performance Android notification filtering module built on the Xposed / LSPosed framework. By hooking deep into the system layer, it accurately intercepts and blocks annoying marketing ads and spam push notifications, restoring a clean and tidy notification shade experience.
 
 ## ✨ Core Features
