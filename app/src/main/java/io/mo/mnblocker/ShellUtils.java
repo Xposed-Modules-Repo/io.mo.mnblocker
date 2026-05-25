@@ -100,6 +100,81 @@ final class ShellUtils {
         }
     }
 
+    // ---- Xposed log control helpers (used by DebugActivity) -----------------
+
+    private static final String DISABLE_XPOSED_LOG_FILE =
+            "/data/system/mnblocker/disable_xposed_log";
+    private static final String XPOSED_LOG_LEVEL_FILE =
+            "/data/system/mnblocker/xposed_log_level";
+
+    /** Create or remove the flag file that disables XposedBridge.log output. */
+    static boolean setDisableXposedLog(boolean disabled) {
+        try {
+            if (disabled) {
+                String cmd = "mkdir -p '/data/system/mnblocker'"
+                        + " && echo 1 > '" + DISABLE_XPOSED_LOG_FILE + "'"
+                        + " && chmod 0666 '" + DISABLE_XPOSED_LOG_FILE + "'"
+                        + " && chown 1000:1000 '" + DISABLE_XPOSED_LOG_FILE + "'";
+                return runSu(cmd).exitCode == 0;
+            } else {
+                return runSu("rm -f '" + DISABLE_XPOSED_LOG_FILE + "'").exitCode == 0;
+            }
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Read current disable-xposed-log state. */
+    static boolean isDisableXposedLog() {
+        try {
+            if (new java.io.File(DISABLE_XPOSED_LOG_FILE).exists()) {
+                return true;
+            }
+            ShellResult r = runSu("test -f '" + DISABLE_XPOSED_LOG_FILE + "'");
+            return r.exitCode == 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Write the Xposed log level (0-4) to the level file. */
+    static boolean setXposedLogLevel(int level) {
+        try {
+            String cmd = "mkdir -p '/data/system/mnblocker'"
+                    + " && echo " + level + " > '" + XPOSED_LOG_LEVEL_FILE + "'"
+                    + " && chmod 0666 '" + XPOSED_LOG_LEVEL_FILE + "'"
+                    + " && chown 1000:1000 '" + XPOSED_LOG_LEVEL_FILE + "'";
+            return runSu(cmd).exitCode == 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** Read the current Xposed log level. Returns 4 (ERROR) if not set. */
+    static int getXposedLogLevel() {
+        try {
+            // Try direct read first.
+            java.io.File f = new java.io.File(XPOSED_LOG_LEVEL_FILE);
+            if (f.exists() && f.canRead()) {
+                byte[] buf = new byte[8];
+                try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
+                    int n = fis.read(buf);
+                    if (n > 0) {
+                        return Integer.parseInt(new String(buf, 0, n, "UTF-8").trim());
+                    }
+                }
+            }
+            // Fall back to su.
+            ShellResult r = runSu("cat '" + XPOSED_LOG_LEVEL_FILE + "' 2>/dev/null");
+            if (r.exitCode == 0 && r.stdout != null && !r.stdout.trim().isEmpty()) {
+                return Integer.parseInt(r.stdout.trim());
+            }
+        } catch (Throwable t) {
+            // fall through
+        }
+        return 4; // default: ERROR
+    }
+
     /** Check whether hook.log exists at all. */
     static boolean hookLogExists() {
         try {
