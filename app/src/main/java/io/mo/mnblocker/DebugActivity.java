@@ -40,6 +40,9 @@ public final class DebugActivity extends Activity
     private static final int COLOR_WARN_TEXT = 0xFF9A5B00;
 
     private Switch logSwitch;
+    private Switch disableXposedLogSwitch;
+    private Button[] levelButtons;
+    private int currentLevel = HookLogger.LEVEL_ERROR;
     private FrameLayout rootFrame;
 
     @Override
@@ -71,10 +74,18 @@ public final class DebugActivity extends Activity
 
         setContentView(rootFrame);
 
-        // Read current flag state in background.
+        // Read current flag states in background.
         new Thread(() -> {
-            boolean enabled = ShellUtils.isDebugLogging();
-            runOnUiThread(() -> setCheckedSilently(enabled));
+            boolean logEnabled = ShellUtils.isDebugLogging();
+            boolean xposedDisabled = ShellUtils.isDisableXposedLog();
+            int level = ShellUtils.getXposedLogLevel();
+            runOnUiThread(() -> {
+                setCheckedSilently(logEnabled);
+                setXposedDisabledSilently(xposedDisabled);
+                currentLevel = level;
+                updateLevelButtons(level);
+                setLevelButtonsEnabled(!xposedDisabled);
+            });
         }).start();
     }
 
@@ -175,6 +186,151 @@ public final class DebugActivity extends Activity
         row.addView(logSwitch);
 
         card.addView(row);
+
+        // ---- divider ----
+        View divider1 = new View(this);
+        divider1.setBackgroundColor(COLOR_LINE);
+        LinearLayout.LayoutParams divLp1 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        divLp1.topMargin = dp(10);
+        divLp1.bottomMargin = dp(10);
+        card.addView(divider1, divLp1);
+
+        // ---- disable xposed log switch row ----
+        LinearLayout xpRow = new LinearLayout(this);
+        xpRow.setOrientation(LinearLayout.HORIZONTAL);
+        xpRow.setGravity(Gravity.CENTER_VERTICAL);
+        xpRow.setPadding(0, dp(4), 0, dp(4));
+
+        LinearLayout xpLabelCol = new LinearLayout(this);
+        xpLabelCol.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams xpLabelLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        xpLabelCol.setLayoutParams(xpLabelLp);
+
+        TextView xpLabel = new TextView(this);
+        xpLabel.setText("禁用输出LSP模块日志");
+        xpLabel.setTextColor(COLOR_TEXT);
+        xpLabel.setTextSize(15);
+        xpLabelCol.addView(xpLabel);
+
+        TextView xpDesc = new TextView(this);
+        xpDesc.setText("开启后将不再向 LSPosed 模块日志输出任何日志");
+        xpDesc.setTextColor(COLOR_SUB);
+        xpDesc.setTextSize(11);
+        xpDesc.setPadding(0, dp(2), 0, 0);
+        xpLabelCol.addView(xpDesc);
+
+        xpRow.addView(xpLabelCol);
+
+        disableXposedLogSwitch = new Switch(this);
+        disableXposedLogSwitch.setChecked(false);
+        disableXposedLogSwitch.setOnCheckedChangeListener((btn, checked) -> {
+            setLevelButtonsEnabled(!checked);
+            new Thread(() -> {
+                boolean ok = ShellUtils.setDisableXposedLog(checked);
+                if (!ok) {
+                    runOnUiThread(() -> {
+                        setXposedDisabledSilently(!checked);
+                        setLevelButtonsEnabled(checked);
+                        Toast.makeText(this,
+                                "操作失败，请检查 root 权限",
+                                Toast.LENGTH_SHORT).show();
+                    });
+                }
+            }).start();
+        });
+        xpRow.addView(disableXposedLogSwitch);
+
+        card.addView(xpRow);
+
+        // ---- divider ----
+        View divider2 = new View(this);
+        divider2.setBackgroundColor(COLOR_LINE);
+        LinearLayout.LayoutParams divLp2 = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
+        divLp2.topMargin = dp(10);
+        divLp2.bottomMargin = dp(10);
+        card.addView(divider2, divLp2);
+
+        // ---- log level selector ----
+        LinearLayout lvlSection = new LinearLayout(this);
+        lvlSection.setOrientation(LinearLayout.VERTICAL);
+        lvlSection.setPadding(0, dp(4), 0, dp(4));
+
+        TextView lvlLabel = new TextView(this);
+        lvlLabel.setText("LSP日志输出级别");
+        lvlLabel.setTextColor(COLOR_TEXT);
+        lvlLabel.setTextSize(15);
+        lvlSection.addView(lvlLabel);
+
+        TextView lvlDesc = new TextView(this);
+        lvlDesc.setText("仅输出所选级别及以上的日志到 LSPosed");
+        lvlDesc.setTextColor(COLOR_SUB);
+        lvlDesc.setTextSize(11);
+        lvlDesc.setPadding(0, dp(2), 0, dp(10));
+        lvlSection.addView(lvlDesc);
+
+        // Horizontal button group
+        LinearLayout btnRow = new LinearLayout(this);
+        btnRow.setOrientation(LinearLayout.HORIZONTAL);
+        btnRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        String[] labels = {"ALL", "DEBUG", "INFO", "WARN", "ERROR"};
+        int[] levels = {
+                HookLogger.LEVEL_ALL,
+                HookLogger.LEVEL_DEBUG,
+                HookLogger.LEVEL_INFO,
+                HookLogger.LEVEL_WARN,
+                HookLogger.LEVEL_ERROR
+        };
+        levelButtons = new Button[labels.length];
+
+        for (int i = 0; i < labels.length; i++) {
+            final int lvl = levels[i];
+            Button b = new Button(this);
+            b.setText(labels[i]);
+            b.setTextSize(11);
+            b.setAllCaps(false);
+            b.setPadding(dp(6), dp(8), dp(6), dp(8));
+            b.setMinimumWidth(0);
+            b.setMinWidth(0);
+            b.setMinimumHeight(0);
+            b.setMinHeight(0);
+
+            // Default unselected style
+            b.setTextColor(COLOR_SUB);
+            b.setBackground(roundBg(0xFFEEF0F4, dp(10)));
+
+            LinearLayout.LayoutParams bLp = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            if (i < labels.length - 1) {
+                bLp.rightMargin = dp(6);
+            }
+
+            b.setOnClickListener(v -> {
+                currentLevel = lvl;
+                updateLevelButtons(lvl);
+                new Thread(() -> {
+                    boolean ok = ShellUtils.setXposedLogLevel(lvl);
+                    if (!ok) {
+                        runOnUiThread(() -> Toast.makeText(this,
+                                "操作失败，请检查 root 权限",
+                                Toast.LENGTH_SHORT).show());
+                    }
+                }).start();
+            });
+
+            levelButtons[i] = b;
+            btnRow.addView(b, bLp);
+        }
+
+        lvlSection.addView(btnRow);
+        card.addView(lvlSection);
+
+        // Default highlight: ERROR
+        updateLevelButtons(HookLogger.LEVEL_ERROR);
+
         return card;
     }
 
@@ -287,6 +443,62 @@ public final class DebugActivity extends Activity
                 }
             }).start();
         });
+    }
+
+    private void setXposedDisabledSilently(boolean checked)
+    {
+        disableXposedLogSwitch.setOnCheckedChangeListener(null);
+        disableXposedLogSwitch.setChecked(checked);
+        disableXposedLogSwitch.setOnCheckedChangeListener((btn, c) -> {
+            setLevelButtonsEnabled(!c);
+            new Thread(() -> {
+                boolean ok = ShellUtils.setDisableXposedLog(c);
+                if (!ok) {
+                    runOnUiThread(() -> {
+                        setXposedDisabledSilently(!c);
+                        setLevelButtonsEnabled(c);
+                        Toast.makeText(this,
+                                "操作失败，请检查 root 权限",
+                                Toast.LENGTH_SHORT).show();
+                    });
+                }
+            }).start();
+        });
+    }
+
+    private void updateLevelButtons(int selectedLevel)
+    {
+        if (levelButtons == null) {
+            return;
+        }
+        int[] levels = {
+                HookLogger.LEVEL_ALL,
+                HookLogger.LEVEL_DEBUG,
+                HookLogger.LEVEL_INFO,
+                HookLogger.LEVEL_WARN,
+                HookLogger.LEVEL_ERROR
+        };
+        for (int i = 0; i < levelButtons.length; i++) {
+            Button b = levelButtons[i];
+            if (levels[i] == selectedLevel) {
+                b.setTextColor(Color.WHITE);
+                b.setBackground(roundBg(COLOR_PRIMARY, dp(10)));
+            } else {
+                b.setTextColor(COLOR_SUB);
+                b.setBackground(roundBg(0xFFEEF0F4, dp(10)));
+            }
+        }
+    }
+
+    private void setLevelButtonsEnabled(boolean enabled)
+    {
+        if (levelButtons == null) {
+            return;
+        }
+        for (Button b : levelButtons) {
+            b.setEnabled(enabled);
+            b.setAlpha(enabled ? 1.0f : 0.4f);
+        }
     }
 
     // ---- card / drawing helpers (same style as AboutActivity) ---------------

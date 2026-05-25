@@ -29,6 +29,22 @@ final class HookLogger {
     private static final SimpleDateFormat TS =
             new SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US);
 
+    // ---- Xposed log level constants ----------------------------------------
+    static final int LEVEL_ALL   = 0;
+    static final int LEVEL_DEBUG = 1;
+    static final int LEVEL_INFO  = 2;
+    static final int LEVEL_WARN  = 3;
+    static final int LEVEL_ERROR = 4;
+
+    private static final String DISABLE_XPOSED_LOG_FILE = DIR + "/disable_xposed_log";
+    private static final String XPOSED_LOG_LEVEL_FILE   = DIR + "/xposed_log_level";
+
+    // ---- Cached reads (refreshed every 30 s) --------------------------------
+    private static final long CACHE_TTL_MS = 30_000;
+    private static volatile boolean cachedXposedDisabled = false;
+    private static volatile int     cachedXposedLevel   = LEVEL_ERROR;
+    private static volatile long    cacheTimestamp       = 0;
+
     private HookLogger() {}
 
     static void ensureDir() {
@@ -55,16 +71,20 @@ final class HookLogger {
         }
     }
 
+    static void d(String msg) {
+        write("D", LEVEL_DEBUG, msg, null);
+    }
+
     static void i(String msg) {
-        write("I", msg, null);
+        write("I", LEVEL_INFO, msg, null);
     }
 
     static void w(String msg) {
-        write("W", msg, null);
+        write("W", LEVEL_WARN, msg, null);
     }
 
     static void e(String msg, Throwable t) {
-        write("E", msg, t);
+        write("E", LEVEL_ERROR, msg, t);
     }
 
     /**
@@ -79,19 +99,59 @@ final class HookLogger {
         }
     }
 
-    private static synchronized void write(String level, String msg, Throwable t) {
+    /**
+     * Refresh cached Xposed-log settings from flag files if the cache has
+     * expired (every 30 s). Called on every log invocation but the actual
+     * file IO happens at most once per 30 seconds.
+     */
+    private static void refreshCacheIfNeeded() {
+        long now = System.currentTimeMillis();
+        if (now - cacheTimestamp < CACHE_TTL_MS) {
+            return;
+        }
+        cacheTimestamp = now;
+        try {
+            cachedXposedDisabled = new File(DISABLE_XPOSED_LOG_FILE).exists();
+        } catch (Throwable t) {
+            cachedXposedDisabled = false;
+        }
+        try {
+            File f = new File(XPOSED_LOG_LEVEL_FILE);
+            if (f.exists() && f.canRead()) {
+                byte[] buf = new byte[8];
+                try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
+                    int n = fis.read(buf);
+                    if (n > 0) {
+                        cachedXposedLevel = Integer.parseInt(
+                                new String(buf, 0, n, "UTF-8").trim());
+                    }
+                }
+            } else {
+                cachedXposedLevel = LEVEL_ERROR; // default
+            }
+        } catch (Throwable t) {
+            cachedXposedLevel = LEVEL_ERROR;
+        }
+    }
+
+    private static synchronized void write(String level, int numericLevel,
+                                           String msg, Throwable t) {
         String line = TS.format(new Date()) + " " + level + "/ " + msg;
 
-        // 1) Always go to the Xposed log.
-        try {
-            XposedBridge.log(TAG + line);
-            if (t != null) {
-                XposedBridge.log(t);
+        // 1) Xposed log — subject to disable flag and level filter.
+        refreshCacheIfNeeded();
+        if (!cachedXposedDisabled && numericLevel >= cachedXposedLevel) {
+            try {
+                XposedBridge.log(TAG + line);
+                if (t != null) {
+                    XposedBridge.log(t);
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
         }
 
         // 2) File log only when the debug_logging flag file exists.
+        //    File log always writes ALL levels (not filtered by xposed level).
         if (!isFileLoggingEnabled()) {
             return;
         }
