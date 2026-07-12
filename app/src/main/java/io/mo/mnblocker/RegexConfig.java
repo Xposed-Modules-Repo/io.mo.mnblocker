@@ -45,19 +45,29 @@ final class RegexConfig {
     static final String KEY_MASTER_ENABLED = "master_enabled";
     static final String KEY_MATCH_DESC = "match_description";
     static final String KEY_OVERRIDES = "overrides";
+    static final String KEY_CONTENT_ENABLED = "content_enabled";
+    static final String KEY_CONTENT_RULES = "content_rules";
 
     private static final String MODULE_PKG = "io.mo.mnblocker";
     private static final String RULES_FILE = HookLogger.DIR + "/rules.txt";
 
     private final XSharedPreferences xsp;
 
-    /** Shared block/allow engine; rebuilt on every {@link #reload()}. Never null. */
+    /** Channel block/allow engine; rebuilt on every {@link #reload()}. Never null. */
     private volatile RuleMatcher matcher = RuleMatcher.compile(null, null);
+    /**
+     * Content-level engine: its OWN block rules (matched against a notification's
+     * title / text) but the SAME allow whitelist as {@link #matcher}, so the
+     * verification-code / IM safety valve protects content interception too.
+     */
+    private volatile RuleMatcher contentMatcher = RuleMatcher.compile(null, null);
     private long configFileLastModified = -1L;
     /** key "pkg|id" -> true (force block) / false (force allow). */
     private final Map<String, Boolean> overrides = new HashMap<>();
     private boolean masterEnabled = true;
     private boolean matchDescription = true;
+    /** Content-level interception master toggle (default OFF — it is invasive). */
+    private boolean contentEnabled = false;
 
     private RegexConfig(XSharedPreferences xsp) {
         this.xsp = xsp;
@@ -98,6 +108,7 @@ final class RegexConfig {
     synchronized void reload() {
         Set<String> blockRaw = new LinkedHashSet<>();
         Set<String> allowRaw = new LinkedHashSet<>();
+        Set<String> contentRaw = new LinkedHashSet<>();
         overrides.clear();
 
         // ---- (b) XSharedPreferences ----
@@ -107,8 +118,10 @@ final class RegexConfig {
                 if (xsp.getFile().canRead()) {
                     masterEnabled = xsp.getBoolean(KEY_MASTER_ENABLED, true);
                     matchDescription = xsp.getBoolean(KEY_MATCH_DESC, true);
+                    contentEnabled = xsp.getBoolean(KEY_CONTENT_ENABLED, false);
                     addLines(blockRaw, xsp.getString(KEY_RULES, ""));
                     addLines(allowRaw, xsp.getString(KEY_ALLOW_RULES, ""));
+                    addLines(contentRaw, xsp.getString(KEY_CONTENT_RULES, ""));
                     parseOverrides(xsp.getString(KEY_OVERRIDES, ""));
                 } else {
                     HookLogger.w("XSharedPreferences not readable yet, using defaults + file");
@@ -125,8 +138,10 @@ final class RegexConfig {
             if (disk.hasValue) {
                 masterEnabled = disk.masterEnabled;
                 matchDescription = disk.matchDescription;
+                contentEnabled = disk.contentEnabled;
                 addLines(blockRaw, disk.rules);
                 addLines(allowRaw, disk.allowRules);
+                addLines(contentRaw, disk.contentRules);
                 parseOverrides(disk.overrides);
             }
         } catch (Throwable t) {
@@ -151,12 +166,16 @@ final class RegexConfig {
 
         // ---- compile via the shared engine (default block rule injected there) ----
         matcher = RuleMatcher.compile(blockRaw, allowRaw);
+        // Content engine reuses the SAME allow whitelist as the safety valve.
+        contentMatcher = RuleMatcher.compile(contentRaw, allowRaw);
 
         HookLogger.i("Loaded " + matcher.blockRules().size() + " block rule(s) + "
                 + matcher.allowRules().size() + " allow rule(s) + "
+                + contentMatcher.blockRules().size() + " content rule(s) + "
                 + overrides.size() + " override(s)"
                 + " | masterEnabled=" + masterEnabled
-                + " matchDescription=" + matchDescription);
+                + " matchDescription=" + matchDescription
+                + " contentEnabled=" + contentEnabled);
     }
 
     private void parseOverrides(String json) {
@@ -227,5 +246,28 @@ final class RegexConfig {
      */
     String firstAllowMatch(String... candidates) {
         return matcher.firstAllowMatch(candidates);
+    }
+
+    // ---- content-level interception (notification title / text) --------------
+
+    /** Whether content-level interception is turned on by the user. */
+    boolean isContentEnabled() {
+        return contentEnabled;
+    }
+
+    /**
+     * @return the first content block rule that matched, or {@code null}.
+     *         Matched against notification title / text, not channel metadata.
+     */
+    String contentBlockMatch(String... candidates) {
+        return contentMatcher.firstBlockMatch(candidates);
+    }
+
+    /**
+     * @return the first allow (whitelist) rule that matched the content, or
+     *         {@code null}. Shares the same whitelist as the channel matcher.
+     */
+    String contentAllowMatch(String... candidates) {
+        return contentMatcher.firstAllowMatch(candidates);
     }
 }

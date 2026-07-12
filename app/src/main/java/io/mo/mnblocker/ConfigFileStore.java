@@ -19,7 +19,7 @@ final class ConfigFileStore {
     private ConfigFileStore() {}
 
     static ConfigSnapshot empty() {
-        return new ConfigSnapshot(false, true, true, "", "", "", -1L);
+        return new ConfigSnapshot(false, true, true, "", "", "", false, "", -1L);
     }
 
     static long lastModifiedForHook() {
@@ -47,7 +47,9 @@ final class ConfigFileStore {
                                 boolean matchDescription,
                                 String rules,
                                 String allowRules,
-                                String overrides) {
+                                String overrides,
+                                boolean contentEnabled,
+                                String contentRules) {
         try {
             JSONObject o = new JSONObject();
             o.put(RegexConfig.KEY_MASTER_ENABLED, masterEnabled);
@@ -55,6 +57,8 @@ final class ConfigFileStore {
             o.put(RegexConfig.KEY_RULES, rules == null ? "" : rules);
             o.put(RegexConfig.KEY_ALLOW_RULES, allowRules == null ? "" : allowRules);
             o.put(RegexConfig.KEY_OVERRIDES, overrides == null ? "" : overrides);
+            o.put(RegexConfig.KEY_CONTENT_ENABLED, contentEnabled);
+            o.put(RegexConfig.KEY_CONTENT_RULES, contentRules == null ? "" : contentRules);
             o.put("updatedAt", System.currentTimeMillis());
             return ShellUtils.suWriteFile(CONFIG_FILE, o.toString());
         } catch (Throwable t) {
@@ -67,7 +71,9 @@ final class ConfigFileStore {
                                 boolean matchDescription,
                                 String rules,
                                 String allowRules,
-                                String overrides) {
+                                String overrides,
+                                boolean contentEnabled,
+                                String contentRules) {
         try {
             HookLogger.ensureDir();
             JSONObject o = new JSONObject();
@@ -76,6 +82,8 @@ final class ConfigFileStore {
             o.put(RegexConfig.KEY_RULES, rules == null ? "" : rules);
             o.put(RegexConfig.KEY_ALLOW_RULES, allowRules == null ? "" : allowRules);
             o.put(RegexConfig.KEY_OVERRIDES, overrides == null ? "" : overrides);
+            o.put(RegexConfig.KEY_CONTENT_ENABLED, contentEnabled);
+            o.put(RegexConfig.KEY_CONTENT_RULES, contentRules == null ? "" : contentRules);
             o.put("updatedAt", System.currentTimeMillis());
             try (FileWriter fw = new FileWriter(CONFIG_FILE, false)) {
                 fw.write(o.toString());
@@ -117,6 +125,8 @@ final class ConfigFileStore {
                     o.optString(RegexConfig.KEY_RULES, ""),
                     o.optString(RegexConfig.KEY_ALLOW_RULES, ""),
                     o.optString(RegexConfig.KEY_OVERRIDES, ""),
+                    o.optBoolean(RegexConfig.KEY_CONTENT_ENABLED, false),
+                    o.optString(RegexConfig.KEY_CONTENT_RULES, ""),
                     lastModified);
         } catch (Throwable t) {
             return empty();
@@ -130,6 +140,8 @@ final class ConfigFileStore {
         final String rules;
         final String allowRules;
         final String overrides;
+        final boolean contentEnabled;
+        final String contentRules;
         final long lastModified;
 
         ConfigSnapshot(boolean hasValue,
@@ -138,6 +150,8 @@ final class ConfigFileStore {
                        String rules,
                        String allowRules,
                        String overrides,
+                       boolean contentEnabled,
+                       String contentRules,
                        long lastModified) {
             this.hasValue = hasValue;
             this.masterEnabled = masterEnabled;
@@ -145,6 +159,8 @@ final class ConfigFileStore {
             this.rules = rules == null ? "" : rules;
             this.allowRules = allowRules == null ? "" : allowRules;
             this.overrides = overrides == null ? "" : overrides;
+            this.contentEnabled = contentEnabled;
+            this.contentRules = contentRules == null ? "" : contentRules;
             this.lastModified = lastModified;
         }
     }

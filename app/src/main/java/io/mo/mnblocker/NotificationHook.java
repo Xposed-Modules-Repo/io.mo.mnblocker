@@ -1,14 +1,18 @@
 package io.mo.mnblocker;
 
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
+import android.os.Bundle;
 import android.os.FileObserver;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 import de.robv.android.xposed.XC_MethodHook;
@@ -52,6 +56,8 @@ final class NotificationHook {
     /** Live record of every channel seen, surfaced to the settings UI. */
     private final DetectedChannelsStore detectedStore = new DetectedChannelsStore();
     private final OriginalChannelStateStore originalStateStore = new OriginalChannelStateStore();
+    /** Cumulative counter for content-level blocks, surfaced to the settings UI. */
+    private final ContentStatsStore contentStats = new ContentStatsStore();
 
     NotificationHook(SafetyManager safety) {
         this.safety = safety;
@@ -93,6 +99,11 @@ final class NotificationHook {
         // won't modify importance in that case (decided inside the callback).
         hookChannelStore(lpparam);
         hookChannelQueries(lpparam);
+
+        // Content-level interception on the notification-post path. Always hooked,
+        // but the callback self-gates on the master + content-enabled switches, so
+        // it is inert unless the user opts in.
+        hookNotificationEnqueue(lpparam);
 
         // Safety watcher is installed regardless of the master switch.
         hookAmsForSafety(lpparam);
@@ -637,6 +648,144 @@ final class NotificationHook {
             }
         }
         return "<unknown>";
+    }
+
+    // ------------------------------------------------------------------
+    // (1b) content-level interception (notification title / text)
+    // ------------------------------------------------------------------
+
+    /**
+     * Hook the notification-post choke point so we can suppress an individual
+     * notification by its title / text — catching marketing pushed on a shared
+     * or "default" channel that channel-level blocking cannot reach.
+     *
+     * {@code enqueueNotificationInternal} is the single internal entry every
+     * post funnels through; its signature drifts across releases, so we hook all
+     * overloads by name and find the {@link Notification} argument by type.
+     */
+    private void hookNotificationEnqueue(LoadPackageParam lpparam) {
+        Class<?> nms = XposedHelpers.findClassIfExists(
+                "com.android.server.notification.NotificationManagerService", lpparam.classLoader);
+        if (nms == null) {
+            HookLogger.w("NotificationManagerService not found — content-level "
+                    + "interception unavailable on this ROM.");
+            return;
+        }
+        try {
+            XposedBridge.hookAllMethods(nms, "enqueueNotificationInternal", enqueueCallback);
+            HookLogger.i("Hooked NotificationManagerService#enqueueNotificationInternal "
+                    + "for content-level interception");
+        } catch (Throwable t) {
+            HookLogger.e("Failed to hook enqueueNotificationInternal — content-level "
+                    + "interception disabled.", t);
+        }
+    }
+
+    private final XC_MethodHook enqueueCallback = new XC_MethodHook() {
+        @Override
+        protected void beforeHookedMethod(MethodHookParam param) {
+            if (!safety.hookingAllowed()) {
+                return;
+            }
+            RegexConfig cfg = config;
+            if (cfg == null) {
+                return;
+            }
+            try {
+                cfg.reloadIfChanged();
+                // Double-gated: master switch AND the content-interception toggle.
+                if (!cfg.isMasterEnabled() || !cfg.isContentEnabled()) {
+                    return;
+                }
+
+                Notification n = findNotificationArg(param.args);
+                if (n == null) {
+                    return;
+                }
+                // NEVER suppress a foreground-service notification: the platform
+                // requires it and killing it can crash the owning service.
+                if ((n.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+                    return;
+                }
+
+                String[] candidates = extractContentCandidates(n);
+                if (candidates.length == 0) {
+                    return;
+                }
+
+                // Whitelist wins — protects verification codes / IM.
+                if (cfg.contentAllowMatch(candidates) != null) {
+                    return;
+                }
+                String blockRule = cfg.contentBlockMatch(candidates);
+                if (blockRule == null) {
+                    return;
+                }
+
+                // Suppress: skip the original enqueue entirely.
+                param.setResult(null);
+                contentStats.recordBlock();
+                String pkg = describeCaller(param.args);
+                HookLogger.i("BLOCKED notification (content)"
+                        + " | caller=" + pkg
+                        + " | title=" + HookLogger.safe(firstNonEmpty(candidates))
+                        + " | reason=content:" + blockRule);
+            } catch (Throwable t) {
+                // A failure here must never break notification delivery.
+                HookLogger.e("enqueueCallback error — passing through untouched", t);
+            }
+        }
+    };
+
+    private static Notification findNotificationArg(Object[] args) {
+        if (args == null) {
+            return null;
+        }
+        for (Object a : args) {
+            if (a instanceof Notification) {
+                return (Notification) a;
+            }
+        }
+        return null;
+    }
+
+    /** Pull every user-visible text field out of a notification for matching. */
+    private static String[] extractContentCandidates(Notification n) {
+        List<String> out = new ArrayList<>();
+        try {
+            Bundle b = n.extras;
+            if (b != null) {
+                addText(out, b.getCharSequence(Notification.EXTRA_TITLE));
+                addText(out, b.getCharSequence(Notification.EXTRA_TEXT));
+                addText(out, b.getCharSequence(Notification.EXTRA_BIG_TEXT));
+                addText(out, b.getCharSequence(Notification.EXTRA_SUB_TEXT));
+                addText(out, b.getCharSequence(Notification.EXTRA_TITLE_BIG));
+                addText(out, b.getCharSequence(Notification.EXTRA_INFO_TEXT));
+                addText(out, b.getCharSequence(Notification.EXTRA_SUMMARY_TEXT));
+            }
+            addText(out, n.tickerText);
+        } catch (Throwable ignored) {
+            // extras access can throw on odd ROMs; match on whatever we got.
+        }
+        return out.toArray(new String[0]);
+    }
+
+    private static void addText(List<String> out, CharSequence cs) {
+        if (cs != null) {
+            String s = cs.toString();
+            if (!s.isEmpty()) {
+                out.add(s);
+            }
+        }
+    }
+
+    private static String firstNonEmpty(String[] arr) {
+        for (String s : arr) {
+            if (s != null && !s.isEmpty()) {
+                return s;
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------

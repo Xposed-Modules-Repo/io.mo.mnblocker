@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.text.format.DateUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -66,6 +67,9 @@ public final class MainActivity extends Activity
 
     private EditText rulesInput;
     private EditText allowRulesInput;
+    private Switch contentEnabledSwitch;
+    private EditText contentRulesInput;
+    private TextView contentStatsView;
     private Switch masterSwitch;
     private Switch matchDescSwitch;
     private TextView statusView;
@@ -322,6 +326,68 @@ public final class MainActivity extends Activity
         allowLp.topMargin = dp(8);
         card.addView(allowRulesInput, allowLp);
 
+        card.addView(divider());
+
+        TextView contentTitle = new TextView(this);
+        contentTitle.setText("内容级拦截（实验性）");
+        contentTitle.setTextColor(COLOR_TEXT);
+        contentTitle.setTextSize(14);
+        contentTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        contentTitle.setPadding(0, dp(10), 0, dp(2));
+        card.addView(contentTitle);
+
+        TextView contentDesc = new TextView(this);
+        contentDesc.setText("按通知的标题/正文匹配并拦截整条通知，可拦下共享或“默认”通道推送的营销通知。"
+                + "作用于每一条通知；更新模块后需重启设备一次以载入 Hook，之后开关与规则修改均即时生效。"
+                + "使用下方独立规则，并同样受上方放行白名单保护；前台服务通知不会被拦截。默认关闭，请谨慎开启。");
+        contentDesc.setTextColor(COLOR_SUB);
+        contentDesc.setTextSize(12);
+        contentDesc.setPadding(0, 0, 0, dp(2));
+        card.addView(contentDesc);
+
+        contentEnabledSwitch = cleanSwitch("启用内容级拦截", "在通知入队时按内容匹配（实验性）。");
+        contentEnabledSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
+        card.addView(contentEnabledSwitch);
+
+        contentRulesInput = new EditText(this);
+        contentRulesInput.setMinLines(3);
+        contentRulesInput.setGravity(Gravity.TOP | Gravity.START);
+        contentRulesInput.setTextSize(13);
+        contentRulesInput.setTextColor(COLOR_TEXT);
+        contentRulesInput.setHint("内容拦截正则，一行一个，例如：\n.*(限时特惠|内购|直播间).*");
+        contentRulesInput.setHintTextColor(0xFFB0B6C3);
+        contentRulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
+        contentRulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+
+        LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        contentLp.topMargin = dp(8);
+        card.addView(contentRulesInput, contentLp);
+
+        LinearLayout statsRow = rowLayout();
+        statsRow.setGravity(Gravity.CENTER_VERTICAL);
+        statsRow.setPadding(dp(12), dp(8), dp(8), dp(8));
+        statsRow.setBackground(roundBg(0xFFF8FAFF, dp(12)));
+
+        LinearLayout.LayoutParams statsRowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        statsRowLp.topMargin = dp(10);
+        card.addView(statsRow, statsRowLp);
+
+        contentStatsView = new TextView(this);
+        contentStatsView.setTextSize(12);
+        contentStatsView.setTextColor(COLOR_SUB);
+        contentStatsView.setText("累计拦截：— 条");
+        statsRow.addView(contentStatsView, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        Button resetStatsButton = softButton("清零");
+        resetStatsButton.setOnClickListener(v -> onResetContentStats());
+        statsRow.addView(resetStatsButton, new LinearLayout.LayoutParams(
+                dp(64), dp(38)));
+
         Button saveRules = primaryButton("保存规则与开关");
         saveRules.setOnClickListener(v -> onSaveRules());
 
@@ -459,6 +525,8 @@ public final class MainActivity extends Activity
         boolean matchDesc = sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
         String rules = sp.getString(RegexConfig.KEY_RULES, "");
         String allowRules = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
+        boolean contentEnabled = sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
+        String contentRules = sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
 
         ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
         if (disk.hasValue)
@@ -467,13 +535,17 @@ public final class MainActivity extends Activity
             matchDesc = disk.matchDescription;
             rules = disk.rules;
             allowRules = disk.allowRules;
+            contentEnabled = disk.contentEnabled;
+            contentRules = disk.contentRules;
         }
 
         setCheckedSilently(masterSwitch, master);
         setCheckedSilently(matchDescSwitch, matchDesc);
+        setCheckedSilently(contentEnabledSwitch, contentEnabled);
         setCheckedSilently(onlyMatchedSwitch, sp.getBoolean(KEY_UI_ONLY_MATCHED, true));
         rulesInput.setText(rules);
         allowRulesInput.setText(allowRules);
+        contentRulesInput.setText(contentRules);
         refreshStatus();
     }
 
@@ -482,6 +554,8 @@ public final class MainActivity extends Activity
         prefs().edit()
                 .putBoolean(RegexConfig.KEY_MASTER_ENABLED, masterSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
+                .putBoolean(RegexConfig.KEY_CONTENT_ENABLED,
+                        contentEnabledSwitch != null && contentEnabledSwitch.isChecked())
                 .apply();
         persistConfigFile(false);
         refreshStatus();
@@ -491,10 +565,15 @@ public final class MainActivity extends Activity
     {
         String rules = rulesInput.getText().toString();
         String allowRules = allowRulesInput.getText().toString();
+        String contentRules = contentRulesInput.getText().toString();
         String bad = firstInvalidRegex(rules);
         if (bad == null)
         {
             bad = firstInvalidRegex(allowRules);
+        }
+        if (bad == null)
+        {
+            bad = firstInvalidRegex(contentRules);
         }
         if (bad != null)
         {
@@ -505,8 +584,10 @@ public final class MainActivity extends Activity
         boolean ok = prefs().edit()
                 .putBoolean(RegexConfig.KEY_MASTER_ENABLED, masterSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
+                .putBoolean(RegexConfig.KEY_CONTENT_ENABLED, contentEnabledSwitch.isChecked())
                 .putString(RegexConfig.KEY_RULES, rules)
                 .putString(RegexConfig.KEY_ALLOW_RULES, allowRules)
+                .putString(RegexConfig.KEY_CONTENT_RULES, contentRules)
                 .commit();
         boolean bridgeOk = persistConfigFile(false);
 
@@ -546,6 +627,41 @@ public final class MainActivity extends Activity
         safeModeCached = ShellUtils.isSafeModeTripped();
         selected.retainAll(keySet());
         refreshStatus();
+        refreshContentStats();
+    }
+
+    private void refreshContentStats()
+    {
+        if (contentStatsView == null)
+        {
+            return;
+        }
+        ContentStatsStore.Snapshot s = ContentStatsStore.readForApp();
+        String when = s.lastBlocked > 0
+                ? DateUtils.getRelativeTimeSpanString(s.lastBlocked,
+                        System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+                : "—";
+        contentStatsView.setText("累计拦截：" + s.count + " 条 · 最近：" + when);
+    }
+
+    private void onResetContentStats()
+    {
+        new AlertDialog.Builder(this)
+                .setTitle("清零拦截统计")
+                .setMessage("将内容级拦截的累计次数清零？此操作不影响你的规则与开关。")
+                .setPositiveButton("清零", (d, w) -> new Thread(() ->
+                {
+                    boolean ok = ContentStatsStore.resetFromApp();
+                    runOnUiThread(() ->
+                    {
+                        Toast.makeText(this,
+                                ok ? "已清零" : "清零失败，请检查 root 授权",
+                                Toast.LENGTH_SHORT).show();
+                        refreshContentStats();
+                    });
+                }).start())
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private void persistOverrides()
@@ -572,7 +688,9 @@ public final class MainActivity extends Activity
                 matchDescSwitch == null || matchDescSwitch.isChecked(),
                 rulesInput == null ? "" : rulesInput.getText().toString(),
                 allowRulesInput == null ? "" : allowRulesInput.getText().toString(),
-                overridesJson());
+                overridesJson(),
+                contentEnabledSwitch != null && contentEnabledSwitch.isChecked(),
+                contentRulesInput == null ? "" : contentRulesInput.getText().toString());
         if (!ok && showToast)
         {
             Toast.makeText(this, "同步到 /data/system/mnblocker/config.json 失败，请检查 root 授权", Toast.LENGTH_LONG).show();
@@ -1025,10 +1143,15 @@ public final class MainActivity extends Activity
         int allowCount = countRules(allowRulesInput == null
                 ? prefs().getString(RegexConfig.KEY_ALLOW_RULES, "")
                 : allowRulesInput.getText().toString());
+        int contentCount = countRules(contentRulesInput == null
+                ? prefs().getString(RegexConfig.KEY_CONTENT_RULES, "")
+                : contentRulesInput.getText().toString());
+        boolean contentOn = contentEnabledSwitch != null && contentEnabledSwitch.isChecked();
 
         statusView.setText("状态：" + state
                 + "\n自定义正则：" + count + " 条 · 内置默认：1 条 · 白名单：" + allowCount
-                + " 条 · 单独覆盖：" + overrides.size() + " 项");
+                + " 条 · 单独覆盖：" + overrides.size() + " 项"
+                + "\n内容级拦截：" + (contentOn ? "开启" : "关闭") + " · 内容规则：" + contentCount + " 条");
 
         if (safeMode)
         {
