@@ -19,7 +19,7 @@ final class ConfigFileStore {
     private ConfigFileStore() {}
 
     static ConfigSnapshot empty() {
-        return new ConfigSnapshot(false, true, true, "", "", "", false, "", -1L);
+        return new ConfigSnapshot(false, true, true, "", "", "", false, "", "", -1L);
     }
 
     static long lastModifiedForHook() {
@@ -49,7 +49,8 @@ final class ConfigFileStore {
                                 String allowRules,
                                 String overrides,
                                 boolean contentEnabled,
-                                String contentRules) {
+                                String contentRules,
+                                String appWhitelist) {
         try {
             JSONObject o = new JSONObject();
             o.put(RegexConfig.KEY_MASTER_ENABLED, masterEnabled);
@@ -59,6 +60,7 @@ final class ConfigFileStore {
             o.put(RegexConfig.KEY_OVERRIDES, overrides == null ? "" : overrides);
             o.put(RegexConfig.KEY_CONTENT_ENABLED, contentEnabled);
             o.put(RegexConfig.KEY_CONTENT_RULES, contentRules == null ? "" : contentRules);
+            o.put(RegexConfig.KEY_APP_WHITELIST, appWhitelist == null ? "" : appWhitelist);
             o.put("updatedAt", System.currentTimeMillis());
             return ShellUtils.suWriteFile(CONFIG_FILE, o.toString());
         } catch (Throwable t) {
@@ -73,7 +75,8 @@ final class ConfigFileStore {
                                 String allowRules,
                                 String overrides,
                                 boolean contentEnabled,
-                                String contentRules) {
+                                String contentRules,
+                                String appWhitelist) {
         try {
             HookLogger.ensureDir();
             JSONObject o = new JSONObject();
@@ -84,6 +87,7 @@ final class ConfigFileStore {
             o.put(RegexConfig.KEY_OVERRIDES, overrides == null ? "" : overrides);
             o.put(RegexConfig.KEY_CONTENT_ENABLED, contentEnabled);
             o.put(RegexConfig.KEY_CONTENT_RULES, contentRules == null ? "" : contentRules);
+            o.put(RegexConfig.KEY_APP_WHITELIST, appWhitelist == null ? "" : appWhitelist);
             o.put("updatedAt", System.currentTimeMillis());
             try (FileWriter fw = new FileWriter(CONFIG_FILE, false)) {
                 fw.write(o.toString());
@@ -127,6 +131,7 @@ final class ConfigFileStore {
                     o.optString(RegexConfig.KEY_OVERRIDES, ""),
                     o.optBoolean(RegexConfig.KEY_CONTENT_ENABLED, false),
                     o.optString(RegexConfig.KEY_CONTENT_RULES, ""),
+                    o.optString(RegexConfig.KEY_APP_WHITELIST, ""),
                     lastModified);
         } catch (Throwable t) {
             return empty();
@@ -142,6 +147,7 @@ final class ConfigFileStore {
         final String overrides;
         final boolean contentEnabled;
         final String contentRules;
+        final String appWhitelist;
         final long lastModified;
 
         ConfigSnapshot(boolean hasValue,
@@ -152,6 +158,7 @@ final class ConfigFileStore {
                        String overrides,
                        boolean contentEnabled,
                        String contentRules,
+                       String appWhitelist,
                        long lastModified) {
             this.hasValue = hasValue;
             this.masterEnabled = masterEnabled;
@@ -161,6 +168,7 @@ final class ConfigFileStore {
             this.overrides = overrides == null ? "" : overrides;
             this.contentEnabled = contentEnabled;
             this.contentRules = contentRules == null ? "" : contentRules;
+            this.appWhitelist = appWhitelist == null ? "" : appWhitelist;
             this.lastModified = lastModified;
         }
     }

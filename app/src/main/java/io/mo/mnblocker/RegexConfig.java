@@ -47,6 +47,7 @@ final class RegexConfig {
     static final String KEY_OVERRIDES = "overrides";
     static final String KEY_CONTENT_ENABLED = "content_enabled";
     static final String KEY_CONTENT_RULES = "content_rules";
+    static final String KEY_APP_WHITELIST = "app_whitelist";
 
     private static final String MODULE_PKG = "io.mo.mnblocker";
     private static final String RULES_FILE = HookLogger.DIR + "/rules.txt";
@@ -68,6 +69,8 @@ final class RegexConfig {
     private boolean matchDescription = true;
     /** Content-level interception master toggle (default OFF — it is invasive). */
     private boolean contentEnabled = false;
+    /** Packages whose notifications are fully exempt from any interception. */
+    private final Set<String> appWhitelist = new LinkedHashSet<>();
 
     private RegexConfig(XSharedPreferences xsp) {
         this.xsp = xsp;
@@ -110,6 +113,7 @@ final class RegexConfig {
         Set<String> allowRaw = new LinkedHashSet<>();
         Set<String> contentRaw = new LinkedHashSet<>();
         overrides.clear();
+        appWhitelist.clear();
 
         // ---- (b) XSharedPreferences ----
         try {
@@ -122,6 +126,7 @@ final class RegexConfig {
                     addLines(blockRaw, xsp.getString(KEY_RULES, ""));
                     addLines(allowRaw, xsp.getString(KEY_ALLOW_RULES, ""));
                     addLines(contentRaw, xsp.getString(KEY_CONTENT_RULES, ""));
+                    addLines(appWhitelist, xsp.getString(KEY_APP_WHITELIST, ""));
                     parseOverrides(xsp.getString(KEY_OVERRIDES, ""));
                 } else {
                     HookLogger.w("XSharedPreferences not readable yet, using defaults + file");
@@ -142,6 +147,7 @@ final class RegexConfig {
                 addLines(blockRaw, disk.rules);
                 addLines(allowRaw, disk.allowRules);
                 addLines(contentRaw, disk.contentRules);
+                addLines(appWhitelist, disk.appWhitelist);
                 parseOverrides(disk.overrides);
             }
         } catch (Throwable t) {
@@ -210,6 +216,16 @@ final class RegexConfig {
 
     boolean isMatchDescription() {
         return matchDescription;
+    }
+
+    /** @return true if the whole app is whitelisted (never intercept it). */
+    boolean isAppWhitelisted(String pkg) {
+        if (pkg == null) {
+            return false;
+        }
+        synchronized (this) {
+            return appWhitelist.contains(pkg);
+        }
     }
 
     List<String> rawRules() {

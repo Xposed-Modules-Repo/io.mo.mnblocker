@@ -280,13 +280,16 @@ final class NotificationHook {
                 // ---- always record the channel for the settings UI list ----
                 recordObservedChannel(pkg, channel, before, regexBlocked, rawDesc);
 
-                // ---- decide: per-channel override wins over regex, allow over block ----
+                // ---- decide: override > app-whitelist/allow-regex > block-regex ----
                 Boolean override = cfg.overrideFor(pkg, id);
                 boolean shouldBlock;
                 String decisionReason;
                 if (override != null) {
                     shouldBlock = override;
                     decisionReason = "override(" + (override ? "block" : "allow") + ")";
+                } else if (cfg.isAppWhitelisted(pkg)) {
+                    shouldBlock = false;
+                    decisionReason = "app-whitelist";
                 } else if (allowRule != null) {
                     shouldBlock = false;
                     decisionReason = "allow:" + allowRule;
@@ -479,6 +482,9 @@ final class NotificationHook {
         if (override != null) {
             shouldBlock = override;
             reason = "override(" + (override ? "block" : "allow") + ")";
+        } else if (cfg.isAppWhitelisted(pkg)) {
+            shouldBlock = false;
+            reason = "app-whitelist";
         } else if (allowRule != null) {
             shouldBlock = false;
             reason = "allow:" + allowRule;
@@ -705,6 +711,11 @@ final class NotificationHook {
                 // NEVER suppress a foreground-service notification: the platform
                 // requires it and killing it can crash the owning service.
                 if ((n.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+                    return;
+                }
+
+                // Whole-app whitelist: exempt this app entirely.
+                if (cfg.isAppWhitelisted(describeCaller(param.args))) {
                     return;
                 }
 

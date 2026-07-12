@@ -66,7 +66,6 @@ public final class MainActivity extends Activity
     private static final int COLOR_WARN_TEXT = 0xFF9A5B00;
 
     private EditText rulesInput;
-    private EditText allowRulesInput;
     private Switch contentEnabledSwitch;
     private EditText contentRulesInput;
     private Switch masterSwitch;
@@ -90,6 +89,12 @@ public final class MainActivity extends Activity
     private LinearLayout statsTilesContainer;
     private LinearLayout rankingContainer;
     private final Map<String, String> labelCache = new HashMap<>();
+
+    // Whitelist state is edited on WhitelistActivity; the main screen holds
+    // read-only copies (refreshed in onResume) so the matcher / list stay correct
+    // and config writes here don't clobber them.
+    private String allowRulesText = "";
+    private final Set<String> appWhitelist = new LinkedHashSet<>();
 
     private final List<ChannelRecord> channels = new ArrayList<>();
     private final Map<String, Boolean> overrides = new HashMap<>();
@@ -178,9 +183,50 @@ public final class MainActivity extends Activity
 
         root.addView(heroCard());
         root.addView(globalCard());
+        root.addView(whitelistEntryCard());
         root.addView(rulesCard());
         root.addView(mainActionRow());
         return scroll;
+    }
+
+    /** Tappable entry that opens the dedicated whitelist settings screen. */
+    private View whitelistEntryCard()
+    {
+        LinearLayout card = cardLayout();
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setClickable(true);
+        card.setOnClickListener(v ->
+                startActivity(new Intent(this, WhitelistActivity.class)));
+
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView title = new TextView(this);
+        title.setText("白名单设置");
+        title.setTextSize(17);
+        title.setTextColor(COLOR_TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        text.addView(title);
+
+        TextView desc = new TextView(this);
+        desc.setText("放行白名单（正则）与 App 白名单，保护验证码 / IM 等不被拦截。");
+        desc.setTextSize(12);
+        desc.setTextColor(COLOR_SUB);
+        desc.setPadding(0, dp(4), 0, 0);
+        text.addView(desc);
+        card.addView(text);
+
+        TextView arrow = new TextView(this);
+        arrow.setText("›");
+        arrow.setTextSize(24);
+        arrow.setTextColor(COLOR_SUB);
+        arrow.setPadding(dp(10), 0, dp(4), 0);
+        card.addView(arrow);
+        return card;
     }
 
     private View buildMatchedPage()
@@ -474,38 +520,6 @@ public final class MainActivity extends Activity
         inputLp.topMargin = dp(12);
         card.addView(rulesInput, inputLp);
 
-        TextView allowTitle = new TextView(this);
-        allowTitle.setText("放行白名单（正则）");
-        allowTitle.setTextColor(COLOR_TEXT);
-        allowTitle.setTextSize(14);
-        allowTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        allowTitle.setPadding(0, dp(16), 0, dp(2));
-        card.addView(allowTitle);
-
-        TextView allowDesc = new TextView(this);
-        allowDesc.setText("命中白名单的通知类别永不被拦截，优先级高于上方拦截规则。"
-                + "用于保护验证码、即时通讯等重要通知。");
-        allowDesc.setTextColor(COLOR_SUB);
-        allowDesc.setTextSize(12);
-        allowDesc.setPadding(0, 0, 0, dp(4));
-        card.addView(allowDesc);
-
-        allowRulesInput = new EditText(this);
-        allowRulesInput.setMinLines(3);
-        allowRulesInput.setGravity(Gravity.TOP | Gravity.START);
-        allowRulesInput.setTextSize(13);
-        allowRulesInput.setTextColor(COLOR_TEXT);
-        allowRulesInput.setHint("例如：\n.*(验证码|动态密码).*\n.*(微信|QQ|短信).*");
-        allowRulesInput.setHintTextColor(0xFFB0B6C3);
-        allowRulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
-        allowRulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
-
-        LinearLayout.LayoutParams allowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        allowLp.topMargin = dp(8);
-        card.addView(allowRulesInput, allowLp);
-
         card.addView(divider());
 
         TextView contentTitle = new TextView(this);
@@ -672,7 +686,6 @@ public final class MainActivity extends Activity
         boolean master = sp.getBoolean(RegexConfig.KEY_MASTER_ENABLED, true);
         boolean matchDesc = sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
         String rules = sp.getString(RegexConfig.KEY_RULES, "");
-        String allowRules = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
         boolean contentEnabled = sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
         String contentRules = sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
 
@@ -682,7 +695,6 @@ public final class MainActivity extends Activity
             master = disk.masterEnabled;
             matchDesc = disk.matchDescription;
             rules = disk.rules;
-            allowRules = disk.allowRules;
             contentEnabled = disk.contentEnabled;
             contentRules = disk.contentRules;
         }
@@ -692,9 +704,50 @@ public final class MainActivity extends Activity
         setCheckedSilently(contentEnabledSwitch, contentEnabled);
         setCheckedSilently(onlyMatchedSwitch, sp.getBoolean(KEY_UI_ONLY_MATCHED, true));
         rulesInput.setText(rules);
-        allowRulesInput.setText(allowRules);
         contentRulesInput.setText(contentRules);
+        loadWhitelistState();
         refreshStatus();
+    }
+
+    @Override
+    protected void onResume()
+    {
+        super.onResume();
+        // The whitelist screen may have changed allow rules / app whitelist.
+        loadWhitelistState();
+        refreshStatus();
+        renderList();
+        refreshStats();
+    }
+
+    /** Refresh the read-only whitelist copies the main screen relies on. */
+    private void loadWhitelistState()
+    {
+        SharedPreferences sp = prefs();
+        String allow = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
+        String appList = sp.getString(RegexConfig.KEY_APP_WHITELIST, "");
+
+        ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
+        if (disk.hasValue)
+        {
+            allow = disk.allowRules;
+            appList = disk.appWhitelist;
+        }
+
+        allowRulesText = allow == null ? "" : allow;
+        appWhitelist.clear();
+        if (!TextUtils.isEmpty(appList))
+        {
+            for (String line : appList.split("\\r?\\n"))
+            {
+                String t = line.trim();
+                if (!t.isEmpty())
+                {
+                    appWhitelist.add(t);
+                }
+            }
+        }
+        cachedMatcherKey = null; // allow rules may have changed -> rebuild matcher
     }
 
     private void persistSwitches()
@@ -712,13 +765,8 @@ public final class MainActivity extends Activity
     private void onSaveRules()
     {
         String rules = rulesInput.getText().toString();
-        String allowRules = allowRulesInput.getText().toString();
         String contentRules = contentRulesInput.getText().toString();
         String bad = firstInvalidRegex(rules);
-        if (bad == null)
-        {
-            bad = firstInvalidRegex(allowRules);
-        }
         if (bad == null)
         {
             bad = firstInvalidRegex(contentRules);
@@ -734,7 +782,6 @@ public final class MainActivity extends Activity
                 .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_CONTENT_ENABLED, contentEnabledSwitch.isChecked())
                 .putString(RegexConfig.KEY_RULES, rules)
-                .putString(RegexConfig.KEY_ALLOW_RULES, allowRules)
                 .putString(RegexConfig.KEY_CONTENT_RULES, contentRules)
                 .commit();
         boolean bridgeOk = persistConfigFile(false);
@@ -1058,10 +1105,11 @@ public final class MainActivity extends Activity
                 masterSwitch != null && masterSwitch.isChecked(),
                 matchDescSwitch == null || matchDescSwitch.isChecked(),
                 rulesInput == null ? "" : rulesInput.getText().toString(),
-                allowRulesInput == null ? "" : allowRulesInput.getText().toString(),
+                allowRulesText,
                 overridesJson(),
                 contentEnabledSwitch != null && contentEnabledSwitch.isChecked(),
-                contentRulesInput == null ? "" : contentRulesInput.getText().toString());
+                contentRulesInput == null ? "" : contentRulesInput.getText().toString(),
+                TextUtils.join("\n", appWhitelist));
         if (!ok && showToast)
         {
             Toast.makeText(this, "同步到 /data/system/mnblocker/config.json 失败，请检查 root 授权", Toast.LENGTH_LONG).show();
@@ -1244,6 +1292,10 @@ public final class MainActivity extends Activity
         {
             src = "单独覆盖";
         }
+        else if (appWhitelist.contains(r.pkg))
+        {
+            src = "App白名单";
+        }
         else
         {
             RuleMatcher m = matcher();
@@ -1339,7 +1391,15 @@ public final class MainActivity extends Activity
     private boolean effectiveBlocked(ChannelRecord r)
     {
         Boolean ov = overrides.get(r.key());
-        return (ov != null) ? ov : uiRegexMatched(r);
+        if (ov != null)
+        {
+            return ov;
+        }
+        if (appWhitelist.contains(r.pkg))
+        {
+            return false;
+        }
+        return uiRegexMatched(r);
     }
 
     private int countBlocked(List<ChannelRecord> list)
@@ -1407,7 +1467,7 @@ public final class MainActivity extends Activity
     private RuleMatcher matcher()
     {
         String block = rulesInput == null ? "" : rulesInput.getText().toString();
-        String allow = allowRulesInput == null ? "" : allowRulesInput.getText().toString();
+        String allow = allowRulesText == null ? "" : allowRulesText;
         String key = block + " " + allow;
         if (!key.equals(cachedMatcherKey))
         {
@@ -1511,9 +1571,7 @@ public final class MainActivity extends Activity
         int count = countRules(rulesInput == null
                 ? prefs().getString(RegexConfig.KEY_RULES, "")
                 : rulesInput.getText().toString());
-        int allowCount = countRules(allowRulesInput == null
-                ? prefs().getString(RegexConfig.KEY_ALLOW_RULES, "")
-                : allowRulesInput.getText().toString());
+        int allowCount = countRules(allowRulesText);
         int contentCount = countRules(contentRulesInput == null
                 ? prefs().getString(RegexConfig.KEY_CONTENT_RULES, "")
                 : contentRulesInput.getText().toString());
@@ -1521,7 +1579,7 @@ public final class MainActivity extends Activity
 
         statusView.setText("状态：" + state
                 + "\n自定义正则：" + count + " 条 · 内置默认：1 条 · 白名单：" + allowCount
-                + " 条 · 单独覆盖：" + overrides.size() + " 项"
+                + " 条 · App白名单：" + appWhitelist.size() + " 个 · 单独覆盖：" + overrides.size() + " 项"
                 + "\n内容级拦截：" + (contentOn ? "开启" : "关闭") + " · 内容规则：" + contentCount + " 条");
 
         if (safeMode)

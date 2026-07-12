@@ -39,6 +39,10 @@
         <activity
             android:name=".DebugActivity"
             android:exported="false" />
+
+        <activity
+            android:name=".WhitelistActivity"
+            android:exported="false" />
     </application>
 
 </manifest>
