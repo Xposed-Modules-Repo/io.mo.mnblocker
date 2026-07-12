@@ -65,6 +65,38 @@ final class ShellUtils {
         }
     }
 
+    private static final String SAFE_MODE_FILE = "/data/system/mnblocker/safe_mode";
+
+    /**
+     * Clear the safe-mode flag so hooks are reinstalled on the next boot.
+     * The file lives in /data/system (owned by system, UID 1000), so the
+     * settings UI process cannot delete it directly — it must go through su.
+     */
+    static boolean clearSafeMode() {
+        try {
+            return runSu("rm -f '" + SAFE_MODE_FILE + "'").exitCode == 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * Whether the safe-mode flag is currently set. The settings app runs as a
+     * normal app uid and usually cannot stat /data/system directly (SELinux),
+     * so this falls back to su — the same way detected_channels.json and
+     * config.json are read. A direct check is tried first as a cheap fast path.
+     */
+    static boolean isSafeModeTripped() {
+        try {
+            if (new File(SAFE_MODE_FILE).exists()) {
+                return true;
+            }
+            return runSu("test -f '" + SAFE_MODE_FILE + "'").exitCode == 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     // ---- debug logging helpers (used by DebugActivity) ---------------------
 
     private static final String FLAG_FILE = "/data/system/mnblocker/debug_logging";

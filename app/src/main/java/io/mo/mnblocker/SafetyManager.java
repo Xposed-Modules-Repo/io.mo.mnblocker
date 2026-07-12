@@ -16,12 +16,14 @@ import java.util.Deque;
  *   - if SystemUI restarts MORE THAN TWICE within {@link #WINDOW_MS},
  *     we trip safe mode,
  *   - safe mode writes a persistent flag file. While the flag exists the module
- *     skips installing the notification hooks entirely on the next
- *     system_server start, and disables them in-memory immediately.
+ *     defers installing the notification hooks (staying inert), and disables
+ *     any already-installed hooks in-memory immediately.
  *
  * The flag is intentionally sticky: it must be cleared by the user (from the
  * app, or by deleting /data/system/mnblocker/safe_mode). Better an un-hooked
- * phone than a boot-looping one.
+ * phone than a boot-looping one. Clearing it does NOT require a reboot:
+ * {@link NotificationHook} watches this file and, via {@link #syncFromDisk()},
+ * re-enables the hooks in place when it is removed.
  *
  * All state that must survive a system_server restart goes to /data/system,
  * which the system_server SELinux domain is permitted to write.
@@ -51,6 +53,21 @@ final class SafetyManager {
     }
 
     boolean isSafeMode() {
+        return safeModeTripped;
+    }
+
+    /**
+     * Re-read the on-disk flag into the in-memory state. Called when the flag
+     * file changes at runtime (e.g. the settings app cleared it), so hooks can
+     * resume without a reboot. Returns the resulting safe-mode state.
+     */
+    synchronized boolean syncFromDisk() {
+        boolean onDisk = readFlag();
+        if (onDisk != safeModeTripped) {
+            safeModeTripped = onDisk;
+            HookLogger.i("Safe mode flag re-synced from disk: "
+                    + (onDisk ? "tripped" : "cleared"));
+        }
         return safeModeTripped;
     }
 
@@ -106,9 +123,4 @@ final class SafetyManager {
         }
     }
 
-    /** Allows the in-process side to re-read the flag if it was cleared externally. */
-    @SuppressWarnings("unused")
-    static boolean flagExists() {
-        return new File(FLAG_FILE).exists();
-    }
 }

@@ -1,6 +1,7 @@
 package io.mo.mnblocker;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -68,6 +69,7 @@ public final class MainActivity extends Activity
     private Switch masterSwitch;
     private Switch matchDescSwitch;
     private TextView statusView;
+    private Button clearSafeModeButton;
     private TextView listHeader;
     private TextView batchHint;
     private Switch onlyMatchedSwitch;
@@ -81,6 +83,10 @@ public final class MainActivity extends Activity
     private final Set<String> selected = new LinkedHashSet<>();
     private int sortMode = SORT_BY_APP;
     private boolean multiSelectMode;
+    // Safe-mode state is read via su (the app uid cannot stat /data/system
+    // directly), so it is cached here and refreshed on load / manual refresh
+    // rather than probed on every refreshStatus() call.
+    private boolean safeModeCached;
 
     private final Collator zhCollator = Collator.getInstance(Locale.CHINA);
     private FrameLayout rootFrame;
@@ -187,7 +193,49 @@ public final class MainActivity extends Activity
         lp.topMargin = dp(14);
         card.addView(statusView, lp);
 
+        clearSafeModeButton = baseButton("关闭安全模式");
+        clearSafeModeButton.setTextColor(Color.WHITE);
+        clearSafeModeButton.setBackground(roundBg(COLOR_WARN_TEXT, dp(14)));
+        clearSafeModeButton.setVisibility(View.GONE);
+        clearSafeModeButton.setOnClickListener(v -> onClearSafeMode());
+
+        LinearLayout.LayoutParams safeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(46));
+        safeLp.topMargin = dp(10);
+        card.addView(clearSafeModeButton, safeLp);
+
         return card;
+    }
+
+    private void onClearSafeMode()
+    {
+        new AlertDialog.Builder(this)
+                .setTitle("关闭安全模式")
+                .setMessage("安全模式是在系统界面反复崩溃时自动触发的保护。"
+                        + "确认拦截规则已修正后，清除标志即可恢复拦截。\n\n"
+                        + "模块会在系统进程内监听该标志，通常无需重启即可自动恢复。"
+                        + "若长时间未恢复，可手动重启一次。")
+                .setPositiveButton("清除并恢复", (d, w) -> new Thread(() ->
+                {
+                    boolean ok = ShellUtils.clearSafeMode();
+                    runOnUiThread(() ->
+                    {
+                        if (!ok)
+                        {
+                            Toast.makeText(this,
+                                    "清除失败，请检查 root 授权",
+                                    Toast.LENGTH_LONG).show();
+                            return;
+                        }
+                        safeModeCached = false;
+                        refreshStatus();
+                        Toast.makeText(this, "已清除，拦截将自动恢复，无需重启",
+                                Toast.LENGTH_LONG).show();
+                    });
+                }).start())
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     private View globalCard()
@@ -460,6 +508,7 @@ public final class MainActivity extends Activity
             }
         }
 
+        safeModeCached = ShellUtils.isSafeModeTripped();
         selected.retainAll(keySet());
         refreshStatus();
     }
@@ -880,7 +929,7 @@ public final class MainActivity extends Activity
             return;
         }
 
-        boolean safeMode = SafetyManager.flagExists();
+        boolean safeMode = safeModeCached;
         String state = safeMode
                 ? "⚠ 安全模式已触发，Hook 已停用"
                 : (masterSwitch != null && masterSwitch.isChecked() ? "正常运行" : "总开关已关闭");
@@ -910,6 +959,11 @@ public final class MainActivity extends Activity
         {
             statusView.setTextColor(Color.WHITE);
             statusView.setBackground(roundBg(0x22FFFFFF, dp(14)));
+        }
+
+        if (clearSafeModeButton != null)
+        {
+            clearSafeModeButton.setVisibility(safeMode ? View.VISIBLE : View.GONE);
         }
     }
 

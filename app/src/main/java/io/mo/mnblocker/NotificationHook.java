@@ -3,6 +3,7 @@ package io.mo.mnblocker;
 import android.app.NotificationChannel;
 import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
+import android.os.FileObserver;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
@@ -40,9 +41,14 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam;
 final class NotificationHook {
 
     private static final String SYSTEMUI_PKG = "com.android.systemui";
+    private static final String SAFE_MODE_FILE_NAME = "safe_mode";
 
     private final SafetyManager safety;
     private volatile RegexConfig config;
+    private LoadPackageParam lpparam;
+    private volatile boolean hooksInstalled;
+    /** Retained as a field so the observer thread keeps it (and us) alive. */
+    private FileObserver flagObserver;
     /** Live record of every channel seen, surfaced to the settings UI. */
     private final DetectedChannelsStore detectedStore = new DetectedChannelsStore();
     private final OriginalChannelStateStore originalStateStore = new OriginalChannelStateStore();
@@ -52,6 +58,31 @@ final class NotificationHook {
     }
 
     void install(LoadPackageParam lpparam) {
+        this.lpparam = lpparam;
+
+        // Always watch the flag file, even in safe mode: this is what lets a
+        // runtime clear (from the settings app, a different process) re-enable
+        // the hooks in place, and a runtime trip disable them — both without a
+        // reboot.
+        watchSafeModeFlag();
+
+        if (safety.hookingAllowed()) {
+            installHooks();
+        } else {
+            HookLogger.w("Safe mode active at startup — hooks deferred (module stays "
+                    + "inert). Clearing " + HookLogger.DIR + "/" + SAFE_MODE_FILE_NAME
+                    + " re-enables them without a reboot.");
+        }
+    }
+
+    /**
+     * Place the actual method hooks. Idempotent: safe to call again once the
+     * flag is cleared at runtime (the guard makes repeat calls no-ops).
+     */
+    private synchronized void installHooks() {
+        if (hooksInstalled) {
+            return;
+        }
         // Loaded once here; the callback then calls config.reloadIfChanged() on
         // every event, so UI edits (rules + per-channel switches) take effect on
         // a channel's next create/update without needing a reboot.
@@ -66,7 +97,53 @@ final class NotificationHook {
         // Safety watcher is installed regardless of the master switch.
         hookAmsForSafety(lpparam);
 
-        HookLogger.i("NotificationHook.install() finished for package=" + lpparam.packageName);
+        hooksInstalled = true;
+        HookLogger.i("NotificationHook hooks installed for package=" + lpparam.packageName);
+    }
+
+    /**
+     * Watch {@link HookLogger#DIR} for changes to the safe-mode flag so recovery
+     * needs no reboot. The settings app (a different uid) can only delete the
+     * on-disk flag; this observer, living inside system_server, notices and
+     * re-enables — or disables — the hooks live.
+     *
+     * The deprecated String constructor is used deliberately: the File-based one
+     * arrived in API 29 while the module supports minSdk 24, and the String form
+     * still works on modern Android. Any failure here is non-fatal — recovery
+     * simply falls back to a reboot.
+     */
+    @SuppressWarnings("deprecation")
+    private void watchSafeModeFlag() {
+        try {
+            HookLogger.ensureDir();
+            int mask = FileObserver.CREATE | FileObserver.DELETE
+                    | FileObserver.MOVED_TO | FileObserver.MOVED_FROM;
+            flagObserver = new FileObserver(HookLogger.DIR, mask) {
+                @Override
+                public void onEvent(int event, String path) {
+                    if (SAFE_MODE_FILE_NAME.equals(path)) {
+                        onSafeModeFlagChanged();
+                    }
+                }
+            };
+            flagObserver.startWatching();
+            HookLogger.i("Watching " + HookLogger.DIR + " for safe_mode changes "
+                    + "(reboot-free recovery active).");
+        } catch (Throwable t) {
+            HookLogger.e("Could not start safe_mode watcher — recovery will need a reboot.", t);
+        }
+    }
+
+    private synchronized void onSafeModeFlagChanged() {
+        boolean tripped = safety.syncFromDisk();
+        if (tripped) {
+            HookLogger.w("Safe mode flag set at runtime — hooks now gated off.");
+        } else {
+            // No-op if hooks were already installed this boot; installs them
+            // live if they had been deferred because safe mode was on at start.
+            installHooks();
+            HookLogger.i("Safe mode cleared — hooks re-enabled without a reboot.");
+        }
     }
 
     // ------------------------------------------------------------------

@@ -19,6 +19,11 @@ public final class XposedEntry implements IXposedHookLoadPackage {
     // SafetyManager instance per process is correct.
     private final SafetyManager safety = new SafetyManager();
 
+    // Retained for the process lifetime so its safe-mode FileObserver (and the
+    // deferred-install path it drives) is not garbage-collected.
+    @SuppressWarnings("FieldCanBeLocal")
+    private NotificationHook hook;
+
     @Override
     public void handleLoadPackage(LoadPackageParam lpparam) {
         if (!FRAMEWORK_PKG.equals(lpparam.packageName)) {
@@ -33,12 +38,12 @@ public final class XposedEntry implements IXposedHookLoadPackage {
         HookLogger.i("=== MarketingNotificationBlocker loading into system framework ===");
 
         try {
-            if (!safety.hookingAllowed()) {
-                HookLogger.w("Safe mode active — skipping hook installation entirely. "
-                        + "Delete " + HookLogger.DIR + "/safe_mode to re-enable.");
-                return;
-            }
-            new NotificationHook(safety).install(lpparam);
+            // install() installs the hooks only when hooking is allowed, and
+            // always starts a watcher on the safe-mode flag so a later clear
+            // re-enables them without a reboot. Even in safe mode we go through
+            // it — the module stays inert but ready to recover in place.
+            hook = new NotificationHook(safety);
+            hook.install(lpparam);
         } catch (Throwable t) {
             // A failure here must not take down system_server.
             HookLogger.e("Fatal error during hook installation — aborting cleanly", t);

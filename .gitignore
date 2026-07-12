@@ -1,0 +1,56 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+.navigation/
+captures/
+
+# Keystore files (uncomment if using a debug keystore)
+*.jks
+*.keystore
+
+# External native build folder generated in Android Studio 2.2 and later
+.externalNativeBuild/
+.cxx/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Claude
+.claude/
+.vs/
+.gradle/8.13/fileHashes/fileHashes.bin
+.gradle/8.13/fileHashes/fileHashes.lock
+.idea/misc.xml
+.idea/gradle.xml
+.gradle/8.13/executionHistory/executionHistory.lock
+.gradle/8.13/executionHistory/executionHistory.lock
+.gradle/buildOutputCleanup/buildOutputCleanup.lock
+.gradle/8.13/fileHashes/fileHashes.lock
