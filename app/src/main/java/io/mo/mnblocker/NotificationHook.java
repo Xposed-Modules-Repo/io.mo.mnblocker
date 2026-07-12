@@ -255,25 +255,33 @@ final class NotificationHook {
                 String id = channel.getId();
                 CharSequence nameCs = channel.getName();
                 String name = nameCs == null ? null : nameCs.toString();
-                String desc = cfg.isMatchDescription() ? channel.getDescription() : null;
+                String rawDesc = channel.getDescription();
+                // Only feed description to the matcher when the toggle is on, but
+                // always persist the raw description so the UI can match it too.
+                String matchDesc = cfg.isMatchDescription() ? rawDesc : null;
                 int before = channel.getImportance();
 
-                String matchedRule = cfg.firstMatch(id, name, desc);
-                boolean regexMatched = matchedRule != null;
+                // allow rule wins over block rule (verification codes / IM safety valve)
+                String allowRule = cfg.firstAllowMatch(id, name, matchDesc);
+                String blockRule = allowRule != null ? null : cfg.firstMatch(id, name, matchDesc);
+                boolean regexBlocked = allowRule == null && blockRule != null;
 
                 // ---- always record the channel for the settings UI list ----
-                recordObservedChannel(pkg, channel, before, regexMatched);
+                recordObservedChannel(pkg, channel, before, regexBlocked, rawDesc);
 
-                // ---- decide: per-channel override wins over regex ----
+                // ---- decide: per-channel override wins over regex, allow over block ----
                 Boolean override = cfg.overrideFor(pkg, id);
                 boolean shouldBlock;
                 String decisionReason;
                 if (override != null) {
                     shouldBlock = override;
                     decisionReason = "override(" + (override ? "block" : "allow") + ")";
+                } else if (allowRule != null) {
+                    shouldBlock = false;
+                    decisionReason = "allow:" + allowRule;
                 } else {
-                    shouldBlock = regexMatched;
-                    decisionReason = regexMatched ? "regex:" + matchedRule : "no-match";
+                    shouldBlock = blockRule != null;
+                    decisionReason = blockRule != null ? "regex:" + blockRule : "no-match";
                 }
 
                 if (!cfg.isMasterEnabled()) {
@@ -375,13 +383,14 @@ final class NotificationHook {
     }
 
     private void recordObservedChannel(String pkg, NotificationChannel channel,
-                                       int importance, boolean regexMatched) {
+                                       int importance, boolean regexMatched, String desc) {
         try {
             CharSequence nameCs = channel.getName();
             detectedStore.record(new ChannelRecord(
                     pkg,
                     channel.getId(),
                     nameCs == null ? null : nameCs.toString(),
+                    desc,
                     importance,
                     regexMatched,
                     System.currentTimeMillis()));
@@ -401,12 +410,14 @@ final class NotificationHook {
             NotificationChannel c = (NotificationChannel) value;
             CharSequence nameCs = c.getName();
             String name = nameCs == null ? null : nameCs.toString();
-            String desc = cfg.isMatchDescription() ? c.getDescription() : null;
-            String matchedRule = cfg.firstMatch(c.getId(), name, desc);
-            boolean matched = matchedRule != null;
+            String rawDesc = c.getDescription();
+            String matchDesc = cfg.isMatchDescription() ? rawDesc : null;
+            String allowRule = cfg.firstAllowMatch(c.getId(), name, matchDesc);
+            String blockRule = allowRule != null ? null : cfg.firstMatch(c.getId(), name, matchDesc);
+            boolean regexBlocked = allowRule == null && blockRule != null;
             int before = c.getImportance();
-            recordObservedChannel(pkg, c, before, matched);
-            if (applyExistingChannelDecision(pkg, c, before, matched, matchedRule, cfg)) {
+            recordObservedChannel(pkg, c, before, regexBlocked, rawDesc);
+            if (applyExistingChannelDecision(pkg, c, before, allowRule, blockRule, cfg)) {
                 applied[0]++;
             }
             count[0]++;
@@ -444,8 +455,8 @@ final class NotificationHook {
     }
 
     private boolean applyExistingChannelDecision(String pkg, NotificationChannel channel,
-                                                 int before, boolean regexMatched,
-                                                 String matchedRule, RegexConfig cfg) {
+                                                 int before, String allowRule,
+                                                 String blockRule, RegexConfig cfg) {
         if (!cfg.isMasterEnabled()) {
             return restoreChannelIfAllowed(pkg, channel, before, cfg.overrideFor(pkg, channel.getId()),
                     true, "master-off");
@@ -457,9 +468,12 @@ final class NotificationHook {
         if (override != null) {
             shouldBlock = override;
             reason = "override(" + (override ? "block" : "allow") + ")";
+        } else if (allowRule != null) {
+            shouldBlock = false;
+            reason = "allow:" + allowRule;
         } else {
-            shouldBlock = regexMatched;
-            reason = regexMatched ? "regex:" + matchedRule : "no-match";
+            shouldBlock = blockRule != null;
+            reason = blockRule != null ? "regex:" + blockRule : "no-match";
         }
 
         if (!shouldBlock) {

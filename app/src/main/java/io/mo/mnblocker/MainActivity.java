@@ -40,7 +40,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 /**
  * Configuration UI.
@@ -66,6 +65,7 @@ public final class MainActivity extends Activity
     private static final int COLOR_WARN_TEXT = 0xFF9A5B00;
 
     private EditText rulesInput;
+    private EditText allowRulesInput;
     private Switch masterSwitch;
     private Switch matchDescSwitch;
     private TextView statusView;
@@ -90,6 +90,11 @@ public final class MainActivity extends Activity
 
     private final Collator zhCollator = Collator.getInstance(Locale.CHINA);
     private FrameLayout rootFrame;
+
+    // Shared block/allow engine, cached and rebuilt only when the rule text
+    // changes so per-row rendering does not recompile regex repeatedly.
+    private RuleMatcher cachedMatcher;
+    private String cachedMatcherKey;
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
@@ -285,6 +290,38 @@ public final class MainActivity extends Activity
         inputLp.topMargin = dp(12);
         card.addView(rulesInput, inputLp);
 
+        TextView allowTitle = new TextView(this);
+        allowTitle.setText("放行白名单（正则）");
+        allowTitle.setTextColor(COLOR_TEXT);
+        allowTitle.setTextSize(14);
+        allowTitle.setTypeface(Typeface.DEFAULT_BOLD);
+        allowTitle.setPadding(0, dp(16), 0, dp(2));
+        card.addView(allowTitle);
+
+        TextView allowDesc = new TextView(this);
+        allowDesc.setText("命中白名单的通知类别永不被拦截，优先级高于上方拦截规则。"
+                + "用于保护验证码、即时通讯等重要通知。");
+        allowDesc.setTextColor(COLOR_SUB);
+        allowDesc.setTextSize(12);
+        allowDesc.setPadding(0, 0, 0, dp(4));
+        card.addView(allowDesc);
+
+        allowRulesInput = new EditText(this);
+        allowRulesInput.setMinLines(3);
+        allowRulesInput.setGravity(Gravity.TOP | Gravity.START);
+        allowRulesInput.setTextSize(13);
+        allowRulesInput.setTextColor(COLOR_TEXT);
+        allowRulesInput.setHint("例如：\n.*(验证码|动态密码).*\n.*(微信|QQ|短信).*");
+        allowRulesInput.setHintTextColor(0xFFB0B6C3);
+        allowRulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
+        allowRulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+
+        LinearLayout.LayoutParams allowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        allowLp.topMargin = dp(8);
+        card.addView(allowRulesInput, allowLp);
+
         Button saveRules = primaryButton("保存规则与开关");
         saveRules.setOnClickListener(v -> onSaveRules());
 
@@ -421,6 +458,7 @@ public final class MainActivity extends Activity
         boolean master = sp.getBoolean(RegexConfig.KEY_MASTER_ENABLED, true);
         boolean matchDesc = sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
         String rules = sp.getString(RegexConfig.KEY_RULES, "");
+        String allowRules = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
 
         ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
         if (disk.hasValue)
@@ -428,12 +466,14 @@ public final class MainActivity extends Activity
             master = disk.masterEnabled;
             matchDesc = disk.matchDescription;
             rules = disk.rules;
+            allowRules = disk.allowRules;
         }
 
         setCheckedSilently(masterSwitch, master);
         setCheckedSilently(matchDescSwitch, matchDesc);
         setCheckedSilently(onlyMatchedSwitch, sp.getBoolean(KEY_UI_ONLY_MATCHED, true));
         rulesInput.setText(rules);
+        allowRulesInput.setText(allowRules);
         refreshStatus();
     }
 
@@ -450,28 +490,23 @@ public final class MainActivity extends Activity
     private void onSaveRules()
     {
         String rules = rulesInput.getText().toString();
-        for (String line : rules.split("\\r?\\n"))
+        String allowRules = allowRulesInput.getText().toString();
+        String bad = firstInvalidRegex(rules);
+        if (bad == null)
         {
-            String t = line.trim();
-            if (t.isEmpty() || t.startsWith("#"))
-            {
-                continue;
-            }
-            try
-            {
-                Pattern.compile(t);
-            }
-            catch (Exception e)
-            {
-                Toast.makeText(this, "正则有误：" + t, Toast.LENGTH_LONG).show();
-                return;
-            }
+            bad = firstInvalidRegex(allowRules);
+        }
+        if (bad != null)
+        {
+            Toast.makeText(this, "正则有误：" + bad, Toast.LENGTH_LONG).show();
+            return;
         }
 
         boolean ok = prefs().edit()
                 .putBoolean(RegexConfig.KEY_MASTER_ENABLED, masterSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
                 .putString(RegexConfig.KEY_RULES, rules)
+                .putString(RegexConfig.KEY_ALLOW_RULES, allowRules)
                 .commit();
         boolean bridgeOk = persistConfigFile(false);
 
@@ -536,6 +571,7 @@ public final class MainActivity extends Activity
                 masterSwitch != null && masterSwitch.isChecked(),
                 matchDescSwitch == null || matchDescSwitch.isChecked(),
                 rulesInput == null ? "" : rulesInput.getText().toString(),
+                allowRulesInput == null ? "" : allowRulesInput.getText().toString(),
                 overridesJson());
         if (!ok && showToast)
         {
@@ -714,10 +750,28 @@ public final class MainActivity extends Activity
 
         TextView statusLine = new TextView(this);
         Boolean ov = overrides.get(key);
-        boolean matchedNow = uiRegexMatched(r);
-        String src = (ov != null)
-                ? "单独覆盖"
-                : (matchedNow ? "正则命中" : "正则未命中");
+        String src;
+        if (ov != null)
+        {
+            src = "单独覆盖";
+        }
+        else
+        {
+            RuleMatcher m = matcher();
+            String[] cand = candidates(r);
+            if (m.firstAllowMatch(cand) != null)
+            {
+                src = "白名单放行";
+            }
+            else if (m.firstBlockMatch(cand) != null)
+            {
+                src = "正则命中";
+            }
+            else
+            {
+                src = "正则未命中";
+            }
+        }
         statusLine.setText(src + "  ·  当前：" + (blocked ? "拦截" : "允许"));
         statusLine.setTextSize(10);
         statusLine.setTextColor(blocked ? COLOR_DANGER : COLOR_SUCCESS);
@@ -850,32 +904,78 @@ public final class MainActivity extends Activity
         return s;
     }
 
+    /**
+     * Net regex verdict for a channel using the SAME engine as the hook, so the
+     * UI never disagrees with what actually gets blocked. Reflects the allow
+     * whitelist (allow beats block) and the "匹配描述文本" toggle.
+     */
     private boolean uiRegexMatched(ChannelRecord r)
     {
-        List<Pattern> patterns = compileUiPatterns();
-        for (Pattern p : patterns)
-        {
-            if (matches(p, r.id) || matches(p, r.name))
-            {
-                return true;
-            }
-        }
-        return false;
+        return matcher().shouldBlock(candidates(r));
     }
 
-    private List<Pattern> compileUiPatterns()
+    /** Shared engine built from the current rule text; cached until text changes. */
+    private RuleMatcher matcher()
     {
-        List<Pattern> out = new ArrayList<>();
-        try
+        String block = rulesInput == null ? "" : rulesInput.getText().toString();
+        String allow = allowRulesInput == null ? "" : allowRulesInput.getText().toString();
+        String key = block + " " + allow;
+        if (!key.equals(cachedMatcherKey))
         {
-            out.add(Pattern.compile(".*营销.*"));
+            cachedMatcher = RuleMatcher.compile(splitLines(block), splitLines(allow));
+            cachedMatcherKey = key;
         }
-        catch (PatternSyntaxException ignored)
-        {
-        }
+        return cachedMatcher;
+    }
 
-        String rules = rulesInput == null ? "" : rulesInput.getText().toString();
-        for (String line : rules.split("\\r?\\n"))
+    /** Candidate strings to test: id + name, plus description when the toggle is on. */
+    private String[] candidates(ChannelRecord r)
+    {
+        boolean useDesc = matchDescSwitch != null && matchDescSwitch.isChecked()
+                && !TextUtils.isEmpty(r.desc);
+        return useDesc
+                ? new String[]{r.id, r.name, r.desc}
+                : new String[]{r.id, r.name};
+    }
+
+    private static List<String> splitLines(String blob)
+    {
+        List<String> out = new ArrayList<>();
+        if (blob == null)
+        {
+            return out;
+        }
+        for (String line : blob.split("\\r?\\n"))
+        {
+            out.add(line);
+        }
+        return out;
+    }
+
+    private static int countRules(String blob)
+    {
+        int n = 0;
+        if (!TextUtils.isEmpty(blob))
+        {
+            for (String l : blob.split("\\r?\\n"))
+            {
+                String t = l.trim();
+                if (!t.isEmpty() && !t.startsWith("#"))
+                {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    private String firstInvalidRegex(String blob)
+    {
+        if (blob == null)
+        {
+            return null;
+        }
+        for (String line : blob.split("\\r?\\n"))
         {
             String t = line.trim();
             if (t.isEmpty() || t.startsWith("#"))
@@ -884,29 +984,14 @@ public final class MainActivity extends Activity
             }
             try
             {
-                out.add(Pattern.compile(t));
+                Pattern.compile(t);
             }
-            catch (PatternSyntaxException ignored)
+            catch (Exception e)
             {
+                return t;
             }
         }
-        return out;
-    }
-
-    private static boolean matches(Pattern p, String s)
-    {
-        if (TextUtils.isEmpty(s))
-        {
-            return false;
-        }
-        try
-        {
-            return p.matcher(s).matches() || p.matcher(s).find();
-        }
-        catch (Throwable t)
-        {
-            return false;
-        }
+        return null;
     }
 
     private static String displayName(ChannelRecord r)
@@ -934,21 +1019,16 @@ public final class MainActivity extends Activity
                 ? "⚠ 安全模式已触发，Hook 已停用"
                 : (masterSwitch != null && masterSwitch.isChecked() ? "正常运行" : "总开关已关闭");
 
-        String rules = prefs().getString(RegexConfig.KEY_RULES, "");
-        int count = 0;
-        if (!TextUtils.isEmpty(rules))
-        {
-            for (String l : rules.split("\\r?\\n"))
-            {
-                if (!l.trim().isEmpty() && !l.trim().startsWith("#"))
-                {
-                    count++;
-                }
-            }
-        }
+        int count = countRules(rulesInput == null
+                ? prefs().getString(RegexConfig.KEY_RULES, "")
+                : rulesInput.getText().toString());
+        int allowCount = countRules(allowRulesInput == null
+                ? prefs().getString(RegexConfig.KEY_ALLOW_RULES, "")
+                : allowRulesInput.getText().toString());
 
         statusView.setText("状态：" + state
-                + "\n自定义正则：" + count + " 条 · 内置默认：1 条 · 单独覆盖：" + overrides.size() + " 项");
+                + "\n自定义正则：" + count + " 条 · 内置默认：1 条 · 白名单：" + allowCount
+                + " 条 · 单独覆盖：" + overrides.size() + " 项");
 
         if (safeMode)
         {

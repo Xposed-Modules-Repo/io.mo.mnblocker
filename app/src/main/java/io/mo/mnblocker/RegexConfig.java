@@ -3,15 +3,12 @@ package io.mo.mnblocker;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 import de.robv.android.xposed.XSharedPreferences;
 
@@ -25,6 +22,10 @@ import de.robv.android.xposed.XSharedPreferences;
  *       a. built-in default ( .*营销.* )
  *       b. user rules from XSharedPreferences (key {@code rules})
  *       c. plain-text fallback /data/system/mnblocker/rules.txt
+ *     Plus an optional allow / whitelist rule set (key {@code allow_rules}) that
+ *     protects matching channels (verification codes, IM, ...) from ever being
+ *     blocked by a regex. The actual matching lives in {@link RuleMatcher}, which
+ *     is shared with the settings UI so both sides agree.
  *
  *  2. Per-channel overrides — an explicit user decision for ONE channel,
  *     keyed by "pkg|id", stored as a JSON object under {@code overrides}:
@@ -40,6 +41,7 @@ final class RegexConfig {
 
     static final String PREFS_NAME = "mnblocker_prefs";
     static final String KEY_RULES = "rules";
+    static final String KEY_ALLOW_RULES = "allow_rules";
     static final String KEY_MASTER_ENABLED = "master_enabled";
     static final String KEY_MATCH_DESC = "match_description";
     static final String KEY_OVERRIDES = "overrides";
@@ -47,13 +49,10 @@ final class RegexConfig {
     private static final String MODULE_PKG = "io.mo.mnblocker";
     private static final String RULES_FILE = HookLogger.DIR + "/rules.txt";
 
-    /** The literal default rule: any channel whose text contains 营销. */
-    private static final String DEFAULT_RULE = ".*营销.*";
-
     private final XSharedPreferences xsp;
 
-    private final List<Pattern> patterns = new ArrayList<>();
-    private final List<String> rawRules = new ArrayList<>();
+    /** Shared block/allow engine; rebuilt on every {@link #reload()}. Never null. */
+    private volatile RuleMatcher matcher = RuleMatcher.compile(null, null);
     private long configFileLastModified = -1L;
     /** key "pkg|id" -> true (force block) / false (force allow). */
     private final Map<String, Boolean> overrides = new HashMap<>();
@@ -97,8 +96,8 @@ final class RegexConfig {
 
     /** Full (re)load from all sources. */
     synchronized void reload() {
-        Set<String> raw = new LinkedHashSet<>();
-        raw.add(DEFAULT_RULE);
+        Set<String> blockRaw = new LinkedHashSet<>();
+        Set<String> allowRaw = new LinkedHashSet<>();
         overrides.clear();
 
         // ---- (b) XSharedPreferences ----
@@ -108,7 +107,8 @@ final class RegexConfig {
                 if (xsp.getFile().canRead()) {
                     masterEnabled = xsp.getBoolean(KEY_MASTER_ENABLED, true);
                     matchDescription = xsp.getBoolean(KEY_MATCH_DESC, true);
-                    addLines(raw, xsp.getString(KEY_RULES, ""));
+                    addLines(blockRaw, xsp.getString(KEY_RULES, ""));
+                    addLines(allowRaw, xsp.getString(KEY_ALLOW_RULES, ""));
                     parseOverrides(xsp.getString(KEY_OVERRIDES, ""));
                 } else {
                     HookLogger.w("XSharedPreferences not readable yet, using defaults + file");
@@ -125,14 +125,15 @@ final class RegexConfig {
             if (disk.hasValue) {
                 masterEnabled = disk.masterEnabled;
                 matchDescription = disk.matchDescription;
-                addLines(raw, disk.rules);
+                addLines(blockRaw, disk.rules);
+                addLines(allowRaw, disk.allowRules);
                 parseOverrides(disk.overrides);
             }
         } catch (Throwable t) {
             HookLogger.e("Failed reading config.json", t);
         }
 
-        // ---- (d) plain text fallback file ----
+        // ---- (d) plain text fallback file (block rules only, legacy) ----
         try {
             File f = new File(RULES_FILE);
             if (f.exists() && f.canRead()) {
@@ -140,7 +141,7 @@ final class RegexConfig {
                 try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
                     int n = fis.read(buf);
                     if (n > 0) {
-                        addLines(raw, new String(buf, 0, n, "UTF-8"));
+                        addLines(blockRaw, new String(buf, 0, n, "UTF-8"));
                     }
                 }
             }
@@ -148,27 +149,11 @@ final class RegexConfig {
             HookLogger.e("Failed reading rules.txt", t);
         }
 
-        // ---- compile ----
-        patterns.clear();
-        rawRules.clear();
-        for (String r : raw) {
-            String trimmed = r.trim();
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
-                continue;
-            }
-            try {
-                patterns.add(Pattern.compile(trimmed));
-                rawRules.add(trimmed);
-            } catch (PatternSyntaxException pse) {
-                HookLogger.w("Invalid regex skipped: " + trimmed + " (" + pse.getDescription() + ")");
-            }
-        }
-        if (patterns.isEmpty()) {
-            patterns.add(Pattern.compile(DEFAULT_RULE));
-            rawRules.add(DEFAULT_RULE);
-        }
+        // ---- compile via the shared engine (default block rule injected there) ----
+        matcher = RuleMatcher.compile(blockRaw, allowRaw);
 
-        HookLogger.i("Loaded " + patterns.size() + " regex rule(s) + "
+        HookLogger.i("Loaded " + matcher.blockRules().size() + " block rule(s) + "
+                + matcher.allowRules().size() + " allow rule(s) + "
                 + overrides.size() + " override(s)"
                 + " | masterEnabled=" + masterEnabled
                 + " matchDescription=" + matchDescription);
@@ -209,7 +194,11 @@ final class RegexConfig {
     }
 
     List<String> rawRules() {
-        return Collections.unmodifiableList(rawRules);
+        return Collections.unmodifiableList(matcher.blockRules());
+    }
+
+    List<String> rawAllowRules() {
+        return Collections.unmodifiableList(matcher.allowRules());
     }
 
     /**
@@ -226,23 +215,17 @@ final class RegexConfig {
     }
 
     /**
-     * @return the first regex rule that matched, or {@code null} if none did.
+     * @return the first block rule that matched, or {@code null} if none did.
      */
-    synchronized String firstMatch(String... candidates) {
-        for (Pattern p : patterns) {
-            for (String cand : candidates) {
-                if (cand == null || cand.isEmpty()) {
-                    continue;
-                }
-                try {
-                    if (p.matcher(cand).matches() || p.matcher(cand).find()) {
-                        return p.pattern();
-                    }
-                } catch (Throwable t) {
-                    HookLogger.e("Regex match error for " + p.pattern(), t);
-                }
-            }
-        }
-        return null;
+    String firstMatch(String... candidates) {
+        return matcher.firstBlockMatch(candidates);
+    }
+
+    /**
+     * @return the first allow (whitelist) rule that matched, or {@code null}.
+     *         A non-null result means the channel must NOT be blocked by regex.
+     */
+    String firstAllowMatch(String... candidates) {
+        return matcher.firstAllowMatch(candidates);
     }
 }

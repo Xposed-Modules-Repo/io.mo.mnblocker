@@ -29,4 +29,7 @@ android {
 dependencies {
     // Xposed API — compileOnly so it is NOT bundled into the apk (provided by LSPosed at runtime)
     compileOnly 'de.robv.android.xposed:api:82'
+
+    // Local JVM unit tests for the pure rule engine (RuleMatcher).
+    testImplementation 'junit:junit:4.13.2'
 }

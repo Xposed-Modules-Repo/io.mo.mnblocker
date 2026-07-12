@@ -19,7 +19,7 @@ final class ConfigFileStore {
     private ConfigFileStore() {}
 
     static ConfigSnapshot empty() {
-        return new ConfigSnapshot(false, true, true, "", "", -1L);
+        return new ConfigSnapshot(false, true, true, "", "", "", -1L);
     }
 
     static long lastModifiedForHook() {
@@ -46,12 +46,14 @@ final class ConfigFileStore {
     static boolean writeFromApp(boolean masterEnabled,
                                 boolean matchDescription,
                                 String rules,
+                                String allowRules,
                                 String overrides) {
         try {
             JSONObject o = new JSONObject();
             o.put(RegexConfig.KEY_MASTER_ENABLED, masterEnabled);
             o.put(RegexConfig.KEY_MATCH_DESC, matchDescription);
             o.put(RegexConfig.KEY_RULES, rules == null ? "" : rules);
+            o.put(RegexConfig.KEY_ALLOW_RULES, allowRules == null ? "" : allowRules);
             o.put(RegexConfig.KEY_OVERRIDES, overrides == null ? "" : overrides);
             o.put("updatedAt", System.currentTimeMillis());
             return ShellUtils.suWriteFile(CONFIG_FILE, o.toString());
@@ -64,6 +66,7 @@ final class ConfigFileStore {
     static boolean writeForHook(boolean masterEnabled,
                                 boolean matchDescription,
                                 String rules,
+                                String allowRules,
                                 String overrides) {
         try {
             HookLogger.ensureDir();
@@ -71,6 +74,7 @@ final class ConfigFileStore {
             o.put(RegexConfig.KEY_MASTER_ENABLED, masterEnabled);
             o.put(RegexConfig.KEY_MATCH_DESC, matchDescription);
             o.put(RegexConfig.KEY_RULES, rules == null ? "" : rules);
+            o.put(RegexConfig.KEY_ALLOW_RULES, allowRules == null ? "" : allowRules);
             o.put(RegexConfig.KEY_OVERRIDES, overrides == null ? "" : overrides);
             o.put("updatedAt", System.currentTimeMillis());
             try (FileWriter fw = new FileWriter(CONFIG_FILE, false)) {
@@ -111,6 +115,7 @@ final class ConfigFileStore {
                     o.optBoolean(RegexConfig.KEY_MASTER_ENABLED, true),
                     o.optBoolean(RegexConfig.KEY_MATCH_DESC, true),
                     o.optString(RegexConfig.KEY_RULES, ""),
+                    o.optString(RegexConfig.KEY_ALLOW_RULES, ""),
                     o.optString(RegexConfig.KEY_OVERRIDES, ""),
                     lastModified);
         } catch (Throwable t) {
@@ -123,6 +128,7 @@ final class ConfigFileStore {
         final boolean masterEnabled;
         final boolean matchDescription;
         final String rules;
+        final String allowRules;
         final String overrides;
         final long lastModified;
 
@@ -130,12 +136,14 @@ final class ConfigFileStore {
                        boolean masterEnabled,
                        boolean matchDescription,
                        String rules,
+                       String allowRules,
                        String overrides,
                        long lastModified) {
             this.hasValue = hasValue;
             this.masterEnabled = masterEnabled;
             this.matchDescription = matchDescription;
             this.rules = rules == null ? "" : rules;
+            this.allowRules = allowRules == null ? "" : allowRules;
             this.overrides = overrides == null ? "" : overrides;
             this.lastModified = lastModified;
         }
