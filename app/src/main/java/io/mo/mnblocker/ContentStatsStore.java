@@ -5,18 +5,23 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileWriter;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * Cumulative counter for content-level interception.
  *
  * Direction: hook (system_server) writes, app UI reads.
  *
- * Only two numbers are persisted — the total block count and the wall-clock
- * time of the last block. Deliberately NO notification text is stored: the file
- * is world-readable (so the app, a different uid, can read it) and notification
- * titles can be sensitive.
+ * Persists a total block count, the wall-clock time of the last block, and a
+ * per-package breakdown (package name -> block count) that feeds the stats
+ * page's app ranking. Deliberately NO notification text is stored: the file is
+ * world-readable (so the app, a different uid, can read it) and notification
+ * titles can be sensitive; package names are the same granularity already kept
+ * in {@link DetectedChannelsStore}.
  *
- * File: /data/system/mnblocker/content_stats.json  {"count":N,"lastBlocked":ms}
+ * File: /data/system/mnblocker/content_stats.json
+ *   {"count":N,"lastBlocked":ms,"perApp":{"pkg":n,...}}
  *
  * The hook side keeps the value in memory but re-syncs from disk whenever the
  * file's mtime changes, so an app-side "reset to zero" (written through the
@@ -29,18 +34,22 @@ final class ContentStatsStore {
     // ---- hook-side live state ----
     private long count = -1L; // -1 = not yet loaded from disk
     private long lastBlocked = 0L;
+    private final LinkedHashMap<String, Long> perApp = new LinkedHashMap<>();
     private long fileMtime = Long.MIN_VALUE;
 
     ContentStatsStore() {}
 
     /**
-     * Record one content-level block and persist. Called from the hook.
-     * Synchronised: NotificationManagerService enqueues from several threads.
+     * Record one content-level block by {@code pkg} and persist. Called from the
+     * hook. Synchronised: NotificationManagerService enqueues from several threads.
      */
-    synchronized void recordBlock() {
+    synchronized void recordBlock(String pkg) {
         syncFromDiskIfNeeded();
         count++;
         lastBlocked = System.currentTimeMillis();
+        String key = (pkg == null || pkg.isEmpty()) ? "<unknown>" : pkg;
+        Long prev = perApp.get(key);
+        perApp.put(key, (prev == null ? 0L : prev) + 1L);
         flush();
     }
 
@@ -52,6 +61,8 @@ final class ContentStatsStore {
                 Snapshot s = readFromDisk();
                 count = Math.max(0L, s.count);
                 lastBlocked = s.lastBlocked;
+                perApp.clear();
+                perApp.putAll(s.perApp);
                 fileMtime = m;
             }
         } catch (Throwable t) {
@@ -67,6 +78,11 @@ final class ContentStatsStore {
             JSONObject o = new JSONObject();
             o.put("count", count);
             o.put("lastBlocked", lastBlocked);
+            JSONObject apps = new JSONObject();
+            for (Map.Entry<String, Long> e : perApp.entrySet()) {
+                apps.put(e.getKey(), e.getValue());
+            }
+            o.put("perApp", apps);
             File f = new File(FILE);
             try (FileWriter fw = new FileWriter(f, false)) {
                 fw.write(o.toString());
@@ -104,6 +120,7 @@ final class ContentStatsStore {
             JSONObject o = new JSONObject();
             o.put("count", 0L);
             o.put("lastBlocked", 0L);
+            o.put("perApp", new JSONObject());
             return ShellUtils.suWriteFile(FILE, o.toString());
         } catch (Throwable t) {
             return false;
@@ -128,23 +145,34 @@ final class ContentStatsStore {
 
     private static Snapshot parse(String json) {
         if (json == null || json.trim().isEmpty()) {
-            return new Snapshot(0L, 0L);
+            return new Snapshot(0L, 0L, new LinkedHashMap<>());
         }
         try {
             JSONObject o = new JSONObject(json);
-            return new Snapshot(o.optLong("count", 0L), o.optLong("lastBlocked", 0L));
+            LinkedHashMap<String, Long> apps = new LinkedHashMap<>();
+            JSONObject a = o.optJSONObject("perApp");
+            if (a != null) {
+                for (java.util.Iterator<String> it = a.keys(); it.hasNext(); ) {
+                    String k = it.next();
+                    apps.put(k, a.optLong(k, 0L));
+                }
+            }
+            return new Snapshot(o.optLong("count", 0L), o.optLong("lastBlocked", 0L), apps);
         } catch (Throwable t) {
-            return new Snapshot(0L, 0L);
+            return new Snapshot(0L, 0L, new LinkedHashMap<>());
         }
     }
 
     static final class Snapshot {
         final long count;
         final long lastBlocked;
+        /** package name -> content-level block count. */
+        final Map<String, Long> perApp;
 
-        Snapshot(long count, long lastBlocked) {
+        Snapshot(long count, long lastBlocked, Map<String, Long> perApp) {
             this.count = count;
             this.lastBlocked = lastBlocked;
+            this.perApp = perApp;
         }
     }
 }

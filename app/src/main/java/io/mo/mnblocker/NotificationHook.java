@@ -724,8 +724,8 @@ final class NotificationHook {
 
                 // Suppress: skip the original enqueue entirely.
                 param.setResult(null);
-                contentStats.recordBlock();
                 String pkg = describeCaller(param.args);
+                contentStats.recordBlock(pkg);
                 HookLogger.i("BLOCKED notification (content)"
                         + " | caller=" + pkg
                         + " | title=" + HookLogger.safe(firstNonEmpty(candidates))

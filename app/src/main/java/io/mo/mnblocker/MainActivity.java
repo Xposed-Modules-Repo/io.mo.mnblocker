@@ -21,7 +21,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.EditText;
-import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
@@ -69,7 +69,6 @@ public final class MainActivity extends Activity
     private EditText allowRulesInput;
     private Switch contentEnabledSwitch;
     private EditText contentRulesInput;
-    private TextView contentStatsView;
     private Switch masterSwitch;
     private Switch matchDescSwitch;
     private TextView statusView;
@@ -81,6 +80,16 @@ public final class MainActivity extends Activity
     private Button sortButton;
     private Button multiSelectButton;
     private Button selectAllButton;
+
+    // Bottom-tab pages and controls.
+    private View pageMain;
+    private View pageStats;
+    private View pageMatched;
+    private TextView[] tabViews;
+    private ImageView[] tabIcons;
+    private LinearLayout statsTilesContainer;
+    private LinearLayout rankingContainer;
+    private final Map<String, String> labelCache = new HashMap<>();
 
     private final List<ChannelRecord> channels = new ArrayList<>();
     private final Map<String, Boolean> overrides = new HashMap<>();
@@ -115,6 +124,47 @@ public final class MainActivity extends Activity
 
         rootFrame = new FrameLayout(this);
 
+        LinearLayout outer = new LinearLayout(this);
+        outer.setOrientation(LinearLayout.VERTICAL);
+        outer.setBackgroundColor(COLOR_BG);
+
+        FrameLayout contentFrame = new FrameLayout(this);
+
+        pageMain = buildMainPage();
+        pageStats = buildStatsPage();
+        pageMatched = buildMatchedPage();
+        contentFrame.addView(pageMain, matchFrame());
+        contentFrame.addView(pageStats, matchFrame());
+        contentFrame.addView(pageMatched, matchFrame());
+
+        outer.addView(contentFrame, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        outer.addView(buildTabBar(), new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        rootFrame.addView(outer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+
+        setContentView(rootFrame);
+
+        showTab(0);
+        loadSwitchesAndRules();
+        reloadChannelsAndOverrides();
+        renderList();
+        refreshStats();
+    }
+
+    private FrameLayout.LayoutParams matchFrame()
+    {
+        return new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+    }
+
+    private View buildMainPage()
+    {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(COLOR_BG);
@@ -129,17 +179,148 @@ public final class MainActivity extends Activity
         root.addView(heroCard());
         root.addView(globalCard());
         root.addView(rulesCard());
-        root.addView(channelCard());
+        root.addView(mainActionRow());
+        return scroll;
+    }
 
-        rootFrame.addView(scroll, new FrameLayout.LayoutParams(
+    private View buildMatchedPage()
+    {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(COLOR_BG);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(18), dp(16), dp(20));
+        scroll.addView(root, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+                ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        setContentView(rootFrame);
+        root.addView(channelCard());
+        return scroll;
+    }
 
-        loadSwitchesAndRules();
-        reloadChannelsAndOverrides();
-        renderList();
+    private View buildStatsPage()
+    {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(COLOR_BG);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(18), dp(16), dp(20));
+        scroll.addView(root, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout tilesCard = cardLayout();
+        tilesCard.addView(sectionTitle("拦截统计", "均为真实统计；环比趋势与历史暂未采集。"));
+        statsTilesContainer = new LinearLayout(this);
+        statsTilesContainer.setOrientation(LinearLayout.VERTICAL);
+        tilesCard.addView(statsTilesContainer);
+        root.addView(tilesCard);
+
+        LinearLayout rankCard = cardLayout();
+        rankCard.addView(sectionTitle("拦截命中应用排行",
+                "按“通道拦截 + 内容拦截”合计次数从高到低。"));
+        rankingContainer = new LinearLayout(this);
+        rankingContainer.setOrientation(LinearLayout.VERTICAL);
+        rankCard.addView(rankingContainer);
+        root.addView(rankCard);
+        return scroll;
+    }
+
+    private View mainActionRow()
+    {
+        LinearLayout row = rowLayout();
+
+        Button clear = softButton("清空计数");
+        clear.setOnClickListener(v -> onResetContentStats());
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        clp.rightMargin = dp(10);
+        row.addView(clear, clp);
+
+        Button save = primaryButton("保存规则与开关");
+        save.setOnClickListener(v -> onSaveRules());
+        row.addView(save, new LinearLayout.LayoutParams(0, dp(48), 2f));
+
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(2);
+        row.setLayoutParams(rowLp);
+        return row;
+    }
+
+    private View buildTabBar()
+    {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setBackgroundColor(COLOR_CARD);
+        bar.setPadding(dp(6), dp(6), dp(6), dp(6));
+        bar.setElevation(dp(10));
+
+        String[] labels = {"主页", "拦截统计", "命中类别"};
+        int[] icons = {R.drawable.ic_tab_home, R.drawable.ic_tab_stats, R.drawable.ic_tab_matched};
+        tabViews = new TextView[labels.length];
+        tabIcons = new ImageView[labels.length];
+        for (int i = 0; i < labels.length; i++)
+        {
+            final int idx = i;
+
+            LinearLayout tab = new LinearLayout(this);
+            tab.setOrientation(LinearLayout.VERTICAL);
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(dp(4), dp(8), dp(4), dp(6));
+            tab.setOnClickListener(v -> showTab(idx));
+
+            ImageView icon = new ImageView(this);
+            icon.setImageResource(icons[i]);
+            tab.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
+            TextView t = new TextView(this);
+            t.setText(labels[i]);
+            t.setGravity(Gravity.CENTER);
+            t.setTextSize(11);
+            t.setTypeface(Typeface.DEFAULT_BOLD);
+            t.setPadding(0, dp(4), 0, 0);
+            tab.addView(t);
+
+            tabIcons[i] = icon;
+            tabViews[i] = t;
+            bar.addView(tab, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        return bar;
+    }
+
+    private void showTab(int i)
+    {
+        if (pageMain != null)
+        {
+            pageMain.setVisibility(i == 0 ? View.VISIBLE : View.GONE);
+        }
+        if (pageStats != null)
+        {
+            pageStats.setVisibility(i == 1 ? View.VISIBLE : View.GONE);
+        }
+        if (pageMatched != null)
+        {
+            pageMatched.setVisibility(i == 2 ? View.VISIBLE : View.GONE);
+        }
+        if (tabViews != null)
+        {
+            for (int k = 0; k < tabViews.length; k++)
+            {
+                int c = k == i ? COLOR_PRIMARY : COLOR_SUB;
+                tabViews[k].setTextColor(c);
+                tabIcons[k].setColorFilter(c);
+            }
+        }
+        if (i == 1)
+        {
+            refreshStats();
+        }
     }
 
     private View heroCard()
@@ -164,14 +345,13 @@ public final class MainActivity extends Activity
         View spacer = new View(this);
         header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
-        ImageButton aboutButton = new ImageButton(this);
-        aboutButton.setImageResource(R.drawable.ic_about);
-        aboutButton.setColorFilter(Color.WHITE);
-        aboutButton.setBackground(roundBg(0x33FFFFFF, dp(999)));
-        aboutButton.setContentDescription("关于");
-        aboutButton.setPadding(dp(8), dp(8), dp(8), dp(8));
-        aboutButton.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
-        header.addView(aboutButton, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        ImageView appIcon = new ImageView(this);
+        appIcon.setImageResource(R.mipmap.ic_launcher);
+        appIcon.setBackground(roundBg(0x33FFFFFF, dp(999)));
+        appIcon.setContentDescription("关于");
+        appIcon.setPadding(dp(6), dp(6), dp(6), dp(6));
+        appIcon.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
+        header.addView(appIcon, new LinearLayout.LayoutParams(dp(46), dp(46)));
 
         card.addView(header);
 
@@ -364,38 +544,6 @@ public final class MainActivity extends Activity
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         contentLp.topMargin = dp(8);
         card.addView(contentRulesInput, contentLp);
-
-        LinearLayout statsRow = rowLayout();
-        statsRow.setGravity(Gravity.CENTER_VERTICAL);
-        statsRow.setPadding(dp(12), dp(8), dp(8), dp(8));
-        statsRow.setBackground(roundBg(0xFFF8FAFF, dp(12)));
-
-        LinearLayout.LayoutParams statsRowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        statsRowLp.topMargin = dp(10);
-        card.addView(statsRow, statsRowLp);
-
-        contentStatsView = new TextView(this);
-        contentStatsView.setTextSize(12);
-        contentStatsView.setTextColor(COLOR_SUB);
-        contentStatsView.setText("累计拦截：— 条");
-        statsRow.addView(contentStatsView, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        Button resetStatsButton = softButton("清零");
-        resetStatsButton.setOnClickListener(v -> onResetContentStats());
-        statsRow.addView(resetStatsButton, new LinearLayout.LayoutParams(
-                dp(64), dp(38)));
-
-        Button saveRules = primaryButton("保存规则与开关");
-        saveRules.setOnClickListener(v -> onSaveRules());
-
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(46));
-        btnLp.topMargin = dp(12);
-        card.addView(saveRules, btnLp);
 
         return card;
     }
@@ -596,6 +744,7 @@ public final class MainActivity extends Activity
                 Toast.LENGTH_LONG).show();
         refreshStatus();
         renderList();
+        refreshStats();
     }
 
     private void reloadChannelsAndOverrides()
@@ -627,37 +776,259 @@ public final class MainActivity extends Activity
         safeModeCached = ShellUtils.isSafeModeTripped();
         selected.retainAll(keySet());
         refreshStatus();
-        refreshContentStats();
+        refreshStats();
     }
 
-    private void refreshContentStats()
+    /** Rebuild the stats page: tiles + the combined per-app block ranking. */
+    private void refreshStats()
     {
-        if (contentStatsView == null)
+        if (statsTilesContainer == null || rankingContainer == null)
         {
             return;
         }
-        ContentStatsStore.Snapshot s = ContentStatsStore.readForApp();
-        String when = s.lastBlocked > 0
-                ? DateUtils.getRelativeTimeSpanString(s.lastBlocked,
+
+        ContentStatsStore.Snapshot cs = ContentStatsStore.readForApp();
+        Map<String, Integer> blockedByApp = blockedChannelsByApp();
+        int totalBlockedChannels = 0;
+        for (int v : blockedByApp.values())
+        {
+            totalBlockedChannels += v;
+        }
+        Set<String> apps = new LinkedHashSet<>(blockedByApp.keySet());
+        apps.addAll(cs.perApp.keySet());
+        int ruleCount = countRules(rulesInput == null ? "" : rulesInput.getText().toString()) + 1;
+
+        String when = cs.lastBlocked > 0
+                ? DateUtils.getRelativeTimeSpanString(cs.lastBlocked,
                         System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
                 : "—";
-        contentStatsView.setText("累计拦截：" + s.count + " 条 · 最近：" + when);
+
+        statsTilesContainer.removeAllViews();
+        statsTilesContainer.addView(tileRow(
+                statTile("内容级累计拦截", String.valueOf(cs.count)),
+                statTile("已拦通知通道", String.valueOf(totalBlockedChannels))));
+        statsTilesContainer.addView(tileRow(
+                statTile("涉及应用", String.valueOf(apps.size())),
+                statTile("拦截规则", String.valueOf(ruleCount))));
+
+        TextView lastLine = new TextView(this);
+        lastLine.setTextSize(12);
+        lastLine.setTextColor(COLOR_SUB);
+        lastLine.setText("最近一次内容拦截：" + when);
+        lastLine.setPadding(dp(2), dp(4), 0, 0);
+        statsTilesContainer.addView(lastLine);
+
+        // ---- combined ranking (channel blocks + content blocks), desc ----
+        final Map<String, Integer> chan = blockedByApp;
+        final Map<String, Long> cont = cs.perApp;
+        List<String> rank = new ArrayList<>();
+        for (String pkg : apps)
+        {
+            if (score(chan, cont, pkg) > 0)
+            {
+                rank.add(pkg);
+            }
+        }
+        Collections.sort(rank, (a, b) ->
+        {
+            long sa = score(chan, cont, a);
+            long sb = score(chan, cont, b);
+            if (sa != sb)
+            {
+                return Long.compare(sb, sa);
+            }
+            return appLabel(a).compareToIgnoreCase(appLabel(b));
+        });
+
+        rankingContainer.removeAllViews();
+        if (rank.isEmpty())
+        {
+            TextView empty = new TextView(this);
+            empty.setText("暂无拦截记录。产生拦截后，这里按应用汇总排行。");
+            empty.setTextSize(12);
+            empty.setTextColor(COLOR_SUB);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(14), dp(20), dp(14), dp(20));
+            empty.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
+            rankingContainer.addView(empty);
+            return;
+        }
+        int i = 1;
+        for (String pkg : rank)
+        {
+            int ch = chan.containsKey(pkg) ? chan.get(pkg) : 0;
+            long ct = cont.containsKey(pkg) ? cont.get(pkg) : 0L;
+            rankingContainer.addView(rankingRow(i++, pkg, ch, ct));
+        }
+    }
+
+    private static long score(Map<String, Integer> chan, Map<String, Long> cont, String pkg)
+    {
+        long c = chan.containsKey(pkg) ? chan.get(pkg) : 0;
+        long t = cont.containsKey(pkg) ? cont.get(pkg) : 0L;
+        return c + t;
+    }
+
+    private Map<String, Integer> blockedChannelsByApp()
+    {
+        Map<String, Integer> m = new HashMap<>();
+        for (ChannelRecord r : channels)
+        {
+            if (effectiveBlocked(r))
+            {
+                Integer prev = m.get(r.pkg);
+                m.put(r.pkg, (prev == null ? 0 : prev) + 1);
+            }
+        }
+        return m;
+    }
+
+    private View tileRow(View a, View b)
+    {
+        LinearLayout row = rowLayout();
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.bottomMargin = dp(10);
+        row.setLayoutParams(rowLp);
+
+        LinearLayout.LayoutParams lpA = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lpA.rightMargin = dp(10);
+        row.addView(a, lpA);
+        row.addView(b, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return row;
+    }
+
+    private View statTile(String label, String value)
+    {
+        LinearLayout t = new LinearLayout(this);
+        t.setOrientation(LinearLayout.VERTICAL);
+        t.setPadding(dp(14), dp(14), dp(14), dp(14));
+        t.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
+
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextSize(12);
+        l.setTextColor(COLOR_SUB);
+        t.addView(l);
+
+        TextView v = new TextView(this);
+        v.setText(value);
+        v.setTextSize(24);
+        v.setTypeface(Typeface.DEFAULT_BOLD);
+        v.setTextColor(COLOR_PRIMARY_DARK);
+        v.setPadding(0, dp(6), 0, 0);
+        t.addView(v);
+        return t;
+    }
+
+    private View rankingRow(int rank, String pkg, int channelBlocks, long contentBlocks)
+    {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setBackground(roundStrokeBg(Color.WHITE, dp(16), COLOR_LINE, 1));
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.bottomMargin = dp(8);
+        row.setLayoutParams(rowLp);
+
+        ImageView iconView = new ImageView(this);
+        iconView.setImageDrawable(appIcon(pkg));
+        row.addView(iconView, new LinearLayout.LayoutParams(dp(38), dp(38)));
+
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setPadding(dp(6), 0, dp(8), 0);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        text.setLayoutParams(tlp);
+
+        TextView name = new TextView(this);
+        name.setText(appLabel(pkg));
+        name.setTextSize(14);
+        name.setTextColor(COLOR_TEXT);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        text.addView(name);
+
+        TextView meta = new TextView(this);
+        meta.setText("通道 " + channelBlocks + " · 内容 " + contentBlocks + "  ·  " + pkg);
+        meta.setTextSize(10);
+        meta.setTextColor(COLOR_SUB);
+        meta.setSingleLine(true);
+        meta.setEllipsize(TextUtils.TruncateAt.END);
+        meta.setPadding(0, dp(3), 0, 0);
+        text.addView(meta);
+        row.addView(text);
+
+        TextView total = new TextView(this);
+        total.setText(String.valueOf(channelBlocks + contentBlocks));
+        total.setTextSize(18);
+        total.setTypeface(Typeface.DEFAULT_BOLD);
+        total.setTextColor(COLOR_DANGER);
+        row.addView(total);
+        return row;
+    }
+
+    private String appLabel(String pkg)
+    {
+        if (TextUtils.isEmpty(pkg))
+        {
+            return "<unknown>";
+        }
+        String cached = labelCache.get(pkg);
+        if (cached != null)
+        {
+            return cached;
+        }
+        String label = pkg;
+        try
+        {
+            android.content.pm.PackageManager pm = getPackageManager();
+            CharSequence l = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
+            if (l != null && l.length() > 0)
+            {
+                label = l.toString();
+            }
+        }
+        catch (Throwable ignored)
+        {
+        }
+        labelCache.put(pkg, label);
+        return label;
+    }
+
+    @SuppressWarnings("deprecation")
+    private android.graphics.drawable.Drawable appIcon(String pkg)
+    {
+        try
+        {
+            return getPackageManager().getApplicationIcon(pkg);
+        }
+        catch (Throwable t)
+        {
+            return getResources().getDrawable(android.R.drawable.sym_def_app_icon);
+        }
     }
 
     private void onResetContentStats()
     {
         new AlertDialog.Builder(this)
-                .setTitle("清零拦截统计")
-                .setMessage("将内容级拦截的累计次数清零？此操作不影响你的规则与开关。")
-                .setPositiveButton("清零", (d, w) -> new Thread(() ->
+                .setTitle("清空内容拦截计数")
+                .setMessage("将内容级拦截的累计次数与应用排行清零？此操作不影响你的规则与开关。")
+                .setPositiveButton("清空", (d, w) -> new Thread(() ->
                 {
                     boolean ok = ContentStatsStore.resetFromApp();
                     runOnUiThread(() ->
                     {
                         Toast.makeText(this,
-                                ok ? "已清零" : "清零失败，请检查 root 授权",
+                                ok ? "已清空" : "清空失败，请检查 root 授权",
                                 Toast.LENGTH_SHORT).show();
-                        refreshContentStats();
+                        refreshStats();
                     });
                 }).start())
                 .setNegativeButton("取消", null)
