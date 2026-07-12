@@ -24,8 +24,8 @@ To run this module properly, your device must meet the following requirements:
 1. Go to the [Releases](https://github.com/lm060719/io.mo.mnblocker/releases) page and download the latest `.apk` package.
 2. Install the APK file normally on your device.
 3. Open the **LSPosed Manager**, locate **MarketingNotificationBlocker** in the "Modules" list, and enable it.
-4. Select the target scope as needed (typically, "Android System Framework" and the specific rogue applications you want to clean up must be selected).
-5. Reboot your device (or restart System UI) to apply the module injection.
+4. Select the scope: **only "Android System Framework" is required.** This module hooks the system framework process (system_server) exclusively — all channel blocking happens there — so you do **not** need to select any individual apps (selecting them has no effect).
+5. Reboot your device to apply the module injection (restarting only System UI is not enough to reload hooks inside the system framework).
 6. Open the app interface to start configuring your custom regular expressions and filtering rules.
 
 ## ⚠️ Disclaimer
