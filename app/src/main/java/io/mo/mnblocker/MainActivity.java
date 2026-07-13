@@ -115,6 +115,12 @@ public final class MainActivity extends Activity
     private String cachedMatcherKey;
 
     @Override
+    protected void attachBaseContext(Context newBase)
+    {
+        super.attachBaseContext(LocaleManager.wrap(newBase));
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
@@ -123,7 +129,7 @@ public final class MainActivity extends Activity
         new Thread(() -> {
             boolean hasRoot = ShellUtils.fixDirPermissions();
             if (!hasRoot) {
-                runOnUiThread(() -> showFadeHint("未授权 root 权限，模块可能无法正常运行"));
+                runOnUiThread(() -> showFadeHint(getString(R.string.main_no_root_hint)));
             }
         }).start();
 
@@ -211,14 +217,14 @@ public final class MainActivity extends Activity
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView title = new TextView(this);
-        title.setText("白名单设置");
+        title.setText(getString(R.string.whitelist_title));
         title.setTextSize(17);
         title.setTextColor(COLOR_TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         text.addView(title);
 
         TextView desc = new TextView(this);
-        desc.setText("放行白名单（正则）与 App 白名单");
+        desc.setText(getString(R.string.whitelist_entry_desc));
         desc.setTextSize(12);
         desc.setTextColor(COLOR_SUB);
         desc.setPadding(0, dp(4), 0, 0);
@@ -265,20 +271,20 @@ public final class MainActivity extends Activity
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout tilesCard = cardLayout();
-        tilesCard.addView(sectionTitle("拦截统计", null));
+        tilesCard.addView(sectionTitle(getString(R.string.stats_title), null));
         statsTilesContainer = new LinearLayout(this);
         statsTilesContainer.setOrientation(LinearLayout.VERTICAL);
         tilesCard.addView(statsTilesContainer);
         root.addView(tilesCard);
 
         LinearLayout rankCard = cardLayout();
-        rankCard.addView(sectionTitle("拦截命中应用排行", null));
+        rankCard.addView(sectionTitle(getString(R.string.stats_ranking_title), null));
         rankingContainer = new LinearLayout(this);
         rankingContainer.setOrientation(LinearLayout.VERTICAL);
         rankCard.addView(rankingContainer);
         root.addView(rankCard);
 
-        Button clear = softButton("清空计数");
+        Button clear = softButton(getString(R.string.action_clear_count));
         clear.setOnClickListener(v -> onResetContentStats());
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
@@ -291,7 +297,7 @@ public final class MainActivity extends Activity
     {
         LinearLayout row = rowLayout();
 
-        Button save = primaryButton("保存规则与开关");
+        Button save = primaryButton(getString(R.string.action_save_rules));
         save.setOnClickListener(v -> onSaveRules());
         row.addView(save, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
@@ -312,7 +318,8 @@ public final class MainActivity extends Activity
         bar.setPadding(dp(6), dp(6), dp(6), dp(6));
         bar.setElevation(dp(10));
 
-        String[] labels = {"主页", "拦截统计", "命中类别"};
+        String[] labels = {getString(R.string.tab_home), getString(R.string.stats_title),
+                getString(R.string.tab_matched)};
         int[] icons = {R.drawable.ic_tab_home, R.drawable.ic_tab_stats, R.drawable.ic_tab_matched};
         tabViews = new TextView[labels.length];
         tabIcons = new ImageView[labels.length];
@@ -400,7 +407,7 @@ public final class MainActivity extends Activity
         ImageView appIcon = new ImageView(this);
         appIcon.setImageResource(R.mipmap.ic_launcher);
         appIcon.setBackground(roundBg(0x33FFFFFF, dp(999)));
-        appIcon.setContentDescription("关于");
+        appIcon.setContentDescription(getString(R.string.nav_about));
         appIcon.setPadding(dp(6), dp(6), dp(6), dp(6));
         appIcon.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
         header.addView(appIcon, new LinearLayout.LayoutParams(dp(46), dp(46)));
@@ -408,7 +415,7 @@ public final class MainActivity extends Activity
         card.addView(header);
 
         TextView title = new TextView(this);
-        title.setText("营销通知拦截器");
+        title.setText(getString(R.string.app_name));
         title.setTextColor(Color.WHITE);
         title.setTextSize(24);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -416,7 +423,7 @@ public final class MainActivity extends Activity
         card.addView(title);
 
         TextView desc = new TextView(this);
-        desc.setText("通过正则与单独覆盖规则，精细控制 App 通知类别。");
+        desc.setText(getString(R.string.hero_desc));
         desc.setTextColor(0xFFE7ECFF);
         desc.setTextSize(13);
         desc.setLineSpacing(dp(2), 1.0f);
@@ -434,7 +441,7 @@ public final class MainActivity extends Activity
         lp.topMargin = dp(14);
         card.addView(statusView, lp);
 
-        clearSafeModeButton = baseButton("关闭安全模式");
+        clearSafeModeButton = baseButton(getString(R.string.safe_mode_close_button));
         clearSafeModeButton.setTextColor(Color.WHITE);
         clearSafeModeButton.setBackground(roundBg(COLOR_WARN_TEXT, dp(14)));
         clearSafeModeButton.setVisibility(View.GONE);
@@ -452,12 +459,9 @@ public final class MainActivity extends Activity
     private void onClearSafeMode()
     {
         new AlertDialog.Builder(this)
-                .setTitle("关闭安全模式")
-                .setMessage("安全模式是在系统界面反复崩溃时自动触发的保护。"
-                        + "确认拦截规则已修正后，清除标志即可恢复拦截。\n\n"
-                        + "模块会在系统进程内监听该标志，通常无需重启即可自动恢复。"
-                        + "若长时间未恢复，可手动重启一次。")
-                .setPositiveButton("清除并恢复", (d, w) -> new Thread(() ->
+                .setTitle(getString(R.string.safe_mode_close_button))
+                .setMessage(getString(R.string.safe_mode_dialog_message))
+                .setPositiveButton(getString(R.string.safe_mode_confirm), (d, w) -> new Thread(() ->
                 {
                     boolean ok = ShellUtils.clearSafeMode();
                     runOnUiThread(() ->
@@ -465,32 +469,33 @@ public final class MainActivity extends Activity
                         if (!ok)
                         {
                             Toast.makeText(this,
-                                    "清除失败，请检查 root 授权",
+                                    getString(R.string.safe_mode_clear_failed),
                                     Toast.LENGTH_LONG).show();
                             return;
                         }
                         safeModeCached = false;
                         refreshStatus();
-                        Toast.makeText(this, "已清除，拦截将自动恢复，无需重启",
+                        Toast.makeText(this, getString(R.string.safe_mode_cleared_toast),
                                 Toast.LENGTH_LONG).show();
                     });
                 }).start())
-                .setNegativeButton("取消", null)
+                .setNegativeButton(getString(R.string.action_cancel), null)
                 .show();
     }
 
     private View globalCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("全局开关", null));
+        card.addView(sectionTitle(getString(R.string.global_switch_title), null));
 
-        masterSwitch = cleanSwitch("启用拦截", null);
+        masterSwitch = cleanSwitch(getString(R.string.switch_master_enable), null);
         masterSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
         card.addView(masterSwitch);
 
         card.addView(divider());
 
-        matchDescSwitch = cleanSwitch("匹配描述文本", "同时检查通知类别 description，命中更完整。 ");
+        matchDescSwitch = cleanSwitch(getString(R.string.switch_match_desc_title),
+                getString(R.string.switch_match_desc_sub));
         matchDescSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
         card.addView(matchDescSwitch);
 
@@ -500,15 +505,14 @@ public final class MainActivity extends Activity
     private View rulesCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("正则规则", null));
+        card.addView(sectionTitle(getString(R.string.rules_card_title), null));
 
         rulesInput = new EditText(this);
         rulesInput.setMinLines(5);
         rulesInput.setGravity(Gravity.TOP | Gravity.START);
         rulesInput.setTextSize(13);
         rulesInput.setTextColor(COLOR_TEXT);
-        rulesInput.setHint("输入正则规则，一行一条（一行内可用 | 匹配多个关键词）\n\n"
-                + "示例：\n.*营销.*\n.*(推广|促销|优惠).*\n^ads?_.*");
+        rulesInput.setHint(getString(R.string.rules_hint));
         rulesInput.setHintTextColor(0xFFB0B6C3);
         rulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         rulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
@@ -522,7 +526,7 @@ public final class MainActivity extends Activity
         card.addView(divider());
 
         TextView contentTitle = new TextView(this);
-        contentTitle.setText("内容级拦截（实验性）");
+        contentTitle.setText(getString(R.string.content_section_title));
         contentTitle.setTextColor(COLOR_TEXT);
         contentTitle.setTextSize(14);
         contentTitle.setTypeface(Typeface.DEFAULT_BOLD);
@@ -530,15 +534,14 @@ public final class MainActivity extends Activity
         card.addView(contentTitle);
 
         TextView contentDesc = new TextView(this);
-        contentDesc.setText("按通知的标题/正文匹配并拦截整条通知，可拦下共享或“默认”通道推送的营销通知。"
-                + "作用于每一条通知；更新模块后需重启设备一次以载入 Hook，之后开关与规则修改均即时生效。"
-                + "使用下方独立规则，并同样受上方放行白名单保护；前台服务通知不会被拦截。默认关闭，请谨慎开启。");
+        contentDesc.setText(getString(R.string.content_section_desc));
         contentDesc.setTextColor(COLOR_SUB);
         contentDesc.setTextSize(12);
         contentDesc.setPadding(0, 0, 0, dp(2));
         card.addView(contentDesc);
 
-        contentEnabledSwitch = cleanSwitch("启用内容级拦截", "在通知入队时按内容匹配（实验性）。");
+        contentEnabledSwitch = cleanSwitch(getString(R.string.switch_content_enable_title),
+                getString(R.string.switch_content_enable_sub));
         contentEnabledSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
         card.addView(contentEnabledSwitch);
 
@@ -547,8 +550,7 @@ public final class MainActivity extends Activity
         contentRulesInput.setGravity(Gravity.TOP | Gravity.START);
         contentRulesInput.setTextSize(13);
         contentRulesInput.setTextColor(COLOR_TEXT);
-        contentRulesInput.setHint("内容拦截正则，一行一条（一行内可用 | 匹配多个关键词）\n\n"
-                + "示例：\n.*(限时特惠|内购|直播间).*");
+        contentRulesInput.setHint(getString(R.string.content_rules_hint));
         contentRulesInput.setHintTextColor(0xFFB0B6C3);
         contentRulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         contentRulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
@@ -565,7 +567,7 @@ public final class MainActivity extends Activity
     private View channelCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("已检测到的通知类别", null));
+        card.addView(sectionTitle(getString(R.string.channel_card_title), null));
 
         listHeader = new TextView(this);
         listHeader.setTextSize(12);
@@ -573,7 +575,8 @@ public final class MainActivity extends Activity
         listHeader.setPadding(0, 0, 0, dp(8));
         card.addView(listHeader);
 
-        onlyMatchedSwitch = cleanSwitch("仅显示正则命中的类别", "关闭后会显示 Hook 记录到的全部通知类别。 ");
+        onlyMatchedSwitch = cleanSwitch(getString(R.string.switch_only_matched_title),
+                getString(R.string.switch_only_matched_sub));
         onlyMatchedSwitch.setOnCheckedChangeListener((b, v) ->
         {
             prefs().edit().putBoolean(KEY_UI_ONLY_MATCHED, v).apply();
@@ -585,16 +588,16 @@ public final class MainActivity extends Activity
         LinearLayout toolbar1 = rowLayout();
         toolbar1.setPadding(0, dp(10), 0, 0);
 
-        Button refreshButton = softButton("刷新");
+        Button refreshButton = softButton(getString(R.string.action_refresh));
         refreshButton.setOnClickListener(v ->
         {
             reloadChannelsAndOverrides();
             renderList();
-            Toast.makeText(this, "已刷新", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, getString(R.string.toast_refreshed), Toast.LENGTH_SHORT).show();
         });
         toolbar1.addView(refreshButton, equalWeightWithGap(true));
 
-        sortButton = softButton("排序");
+        sortButton = softButton(getString(R.string.sort_by_app));
         sortButton.setOnClickListener(v ->
         {
             sortMode = (sortMode == SORT_BY_APP) ? SORT_BY_ALPHA : SORT_BY_APP;
@@ -602,7 +605,7 @@ public final class MainActivity extends Activity
         });
         toolbar1.addView(sortButton, equalWeightWithGap(true));
 
-        multiSelectButton = softButton("多选");
+        multiSelectButton = softButton(getString(R.string.action_multi_select));
         multiSelectButton.setOnClickListener(v ->
         {
             multiSelectMode = !multiSelectMode;
@@ -615,15 +618,15 @@ public final class MainActivity extends Activity
         LinearLayout toolbar2 = rowLayout();
         toolbar2.setPadding(0, dp(8), 0, 0);
 
-        Button blockAll = dangerButton("批量拦截");
+        Button blockAll = dangerButton(getString(R.string.action_block_all));
         blockAll.setOnClickListener(v -> batchSet(true));
         toolbar2.addView(blockAll, equalWeightWithGap(true));
 
-        Button allowAll = successButton("批量允许");
+        Button allowAll = successButton(getString(R.string.action_allow_all));
         allowAll.setOnClickListener(v -> batchSet(false));
         toolbar2.addView(allowAll, equalWeightWithGap(true));
 
-        selectAllButton = softButton("全选/清空");
+        selectAllButton = softButton(getString(R.string.action_select_all_clear));
         selectAllButton.setOnClickListener(v ->
         {
             List<ChannelRecord> visible = visibleChannels();
@@ -773,7 +776,7 @@ public final class MainActivity extends Activity
         }
         if (bad != null)
         {
-            Toast.makeText(this, "正则有误：" + bad, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, getString(R.string.toast_regex_invalid_fmt, bad), Toast.LENGTH_LONG).show();
             return;
         }
 
@@ -787,7 +790,7 @@ public final class MainActivity extends Activity
         boolean bridgeOk = persistConfigFile(false);
 
         Toast.makeText(this,
-                ok && bridgeOk ? "已保存并同步到 Hook" : "已保存到本地，但同步到 Hook 失败，请检查 root 授权",
+                ok && bridgeOk ? getString(R.string.toast_saved_synced) : getString(R.string.toast_saved_sync_failed),
                 Toast.LENGTH_LONG).show();
         refreshStatus();
         renderList();
@@ -852,16 +855,16 @@ public final class MainActivity extends Activity
 
         statsTilesContainer.removeAllViews();
         statsTilesContainer.addView(tileRow(
-                statTile("内容级累计拦截", String.valueOf(cs.count)),
-                statTile("已拦通知通道", String.valueOf(totalBlockedChannels))));
+                statTile(getString(R.string.stat_tile_content_blocks), String.valueOf(cs.count)),
+                statTile(getString(R.string.stat_tile_channel_blocks), String.valueOf(totalBlockedChannels))));
         statsTilesContainer.addView(tileRow(
-                statTile("涉及应用", String.valueOf(apps.size())),
-                statTile("拦截规则", String.valueOf(ruleCount))));
+                statTile(getString(R.string.stat_tile_apps), String.valueOf(apps.size())),
+                statTile(getString(R.string.stat_tile_rules), String.valueOf(ruleCount))));
 
         TextView lastLine = new TextView(this);
         lastLine.setTextSize(12);
         lastLine.setTextColor(COLOR_SUB);
-        lastLine.setText("最近一次内容拦截：" + when);
+        lastLine.setText(getString(R.string.stats_last_blocked_fmt, when));
         lastLine.setPadding(dp(2), dp(4), 0, 0);
         statsTilesContainer.addView(lastLine);
 
@@ -891,7 +894,7 @@ public final class MainActivity extends Activity
         if (rank.isEmpty())
         {
             TextView empty = new TextView(this);
-            empty.setText("暂无拦截记录。产生拦截后，这里按应用汇总排行。");
+            empty.setText(getString(R.string.stats_empty));
             empty.setTextSize(12);
             empty.setTextColor(COLOR_SUB);
             empty.setGravity(Gravity.CENTER);
@@ -1003,7 +1006,7 @@ public final class MainActivity extends Activity
         text.addView(name);
 
         TextView meta = new TextView(this);
-        meta.setText("通道 " + channelBlocks + " · 内容 " + contentBlocks + "  ·  " + pkg);
+        meta.setText(getString(R.string.ranking_meta_fmt, channelBlocks, contentBlocks, pkg));
         meta.setTextSize(10);
         meta.setTextColor(COLOR_SUB);
         meta.setSingleLine(true);
@@ -1065,20 +1068,20 @@ public final class MainActivity extends Activity
     private void onResetContentStats()
     {
         new AlertDialog.Builder(this)
-                .setTitle("清空内容拦截计数")
-                .setMessage("将内容级拦截的累计次数与应用排行清零？此操作不影响你的规则与开关。")
-                .setPositiveButton("清空", (d, w) -> new Thread(() ->
+                .setTitle(getString(R.string.confirm_reset_stats_title))
+                .setMessage(getString(R.string.confirm_reset_stats_msg))
+                .setPositiveButton(getString(R.string.action_clear), (d, w) -> new Thread(() ->
                 {
                     boolean ok = ContentStatsStore.resetFromApp();
                     runOnUiThread(() ->
                     {
                         Toast.makeText(this,
-                                ok ? "已清空" : "清空失败，请检查 root 授权",
+                                ok ? getString(R.string.toast_cleared) : getString(R.string.toast_clear_failed),
                                 Toast.LENGTH_SHORT).show();
                         refreshStats();
                     });
                 }).start())
-                .setNegativeButton("取消", null)
+                .setNegativeButton(getString(R.string.action_cancel), null)
                 .show();
     }
 
@@ -1112,7 +1115,8 @@ public final class MainActivity extends Activity
                 TextUtils.join("\n", appWhitelist));
         if (!ok && showToast)
         {
-            Toast.makeText(this, "同步到 /data/system/mnblocker/config.json 失败，请检查 root 授权", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, getString(R.string.toast_config_sync_failed_fmt, ConfigFileStore.CONFIG_FILE),
+                    Toast.LENGTH_LONG).show();
         }
         return ok;
     }
@@ -1135,8 +1139,10 @@ public final class MainActivity extends Activity
 
     private void renderList()
     {
-        sortButton.setText(sortMode == SORT_BY_APP ? "按应用" : "按字母");
-        multiSelectButton.setText(multiSelectMode ? "多选中" : "多选");
+        sortButton.setText(sortMode == SORT_BY_APP
+                ? getString(R.string.sort_by_app) : getString(R.string.sort_by_alpha));
+        multiSelectButton.setText(multiSelectMode
+                ? getString(R.string.multi_select_active) : getString(R.string.action_multi_select));
         selectAllButton.setEnabled(multiSelectMode);
         selectAllButton.setAlpha(multiSelectMode ? 1.0f : 0.45f);
 
@@ -1144,11 +1150,11 @@ public final class MainActivity extends Activity
 
         if (multiSelectMode)
         {
-            batchHint.setText("多选模式：批量按钮仅作用于已勾选的 " + selected.size() + " 项");
+            batchHint.setText(getString(R.string.batch_hint_multi_fmt, selected.size()));
         }
         else
         {
-            batchHint.setText("普通模式：批量按钮作用于当前显示的 " + visible.size() + " 项");
+            batchHint.setText(getString(R.string.batch_hint_normal_fmt, visible.size()));
         }
 
         listContainer.removeAllViews();
@@ -1157,23 +1163,23 @@ public final class MainActivity extends Activity
         {
             TextView empty = new TextView(this);
             empty.setText(channels.isEmpty()
-                    ? "暂无数据。等待 App 创建通知类别后点刷新；若仍为空，请确认 root 读取权限。"
-                    : "当前没有正则命中的类别。可关闭“仅显示正则命中的类别”查看全部。 ");
+                    ? getString(R.string.empty_no_data)
+                    : getString(R.string.empty_no_regex_match));
             empty.setTextSize(12);
             empty.setTextColor(COLOR_SUB);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(14), dp(22), dp(14), dp(22));
             empty.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
             listContainer.addView(empty);
-            listHeader.setText("显示 0 个 · 已记录 " + channels.size() + " 个");
+            listHeader.setText(getString(R.string.list_header_zero_fmt, channels.size()));
             return;
         }
 
         List<ChannelRecord> sorted = new ArrayList<>(visible);
         Collections.sort(sorted, comparator());
 
-        listHeader.setText("显示 " + sorted.size() + " 个 · 已记录 " + channels.size()
-                + " 个 · 当前显示中 " + countBlocked(sorted) + " 个处于拦截状态");
+        listHeader.setText(getString(R.string.list_header_fmt,
+                sorted.size(), channels.size(), countBlocked(sorted)));
 
         String lastApp = null;
         for (ChannelRecord r : sorted)
@@ -1287,7 +1293,7 @@ public final class MainActivity extends Activity
                 {
                     selected.remove(key);
                 }
-                batchHint.setText("多选模式：批量按钮仅作用于已勾选的 " + selected.size() + " 项");
+                batchHint.setText(getString(R.string.batch_hint_multi_fmt, selected.size()));
             });
             row.addView(cb);
         }
@@ -1322,11 +1328,11 @@ public final class MainActivity extends Activity
         String src;
         if (ov != null)
         {
-            src = "单独覆盖";
+            src = getString(R.string.source_override);
         }
         else if (appWhitelist.contains(r.pkg))
         {
-            src = "App白名单";
+            src = getString(R.string.source_app_whitelist);
         }
         else
         {
@@ -1334,18 +1340,19 @@ public final class MainActivity extends Activity
             String[] cand = candidates(r);
             if (m.firstAllowMatch(cand) != null)
             {
-                src = "白名单放行";
+                src = getString(R.string.source_allow_whitelist);
             }
             else if (m.firstBlockMatch(cand) != null)
             {
-                src = "正则命中";
+                src = getString(R.string.source_regex_matched);
             }
             else
             {
-                src = "正则未命中";
+                src = getString(R.string.source_regex_not_matched);
             }
         }
-        statusLine.setText(src + "  ·  当前：" + (blocked ? "拦截" : "允许"));
+        statusLine.setText(getString(R.string.status_line_fmt, src,
+                getString(blocked ? R.string.status_blocked : R.string.status_allowed)));
         statusLine.setTextSize(10);
         statusLine.setTextColor(blocked ? COLOR_DANGER : COLOR_SUCCESS);
         statusLine.setTypeface(Typeface.DEFAULT_BOLD);
@@ -1359,11 +1366,12 @@ public final class MainActivity extends Activity
         {
             overrides.put(key, checked);
             persistOverrides();
-            statusLine.setText("单独覆盖  ·  当前：" + (checked ? "拦截" : "允许"));
+            statusLine.setText(getString(R.string.status_line_fmt, getString(R.string.source_override),
+                    getString(checked ? R.string.status_blocked : R.string.status_allowed)));
             statusLine.setTextColor(checked ? COLOR_DANGER : COLOR_SUCCESS);
             List<ChannelRecord> visible = visibleChannels();
-            listHeader.setText("显示 " + visible.size() + " 个 · 已记录 " + channels.size()
-                    + " 个 · 当前显示中 " + countBlocked(visible) + " 个处于拦截状态");
+            listHeader.setText(getString(R.string.list_header_fmt,
+                    visible.size(), channels.size(), countBlocked(visible)));
         });
         row.addView(sw);
 
@@ -1393,7 +1401,7 @@ public final class MainActivity extends Activity
         {
             if (selected.isEmpty())
             {
-                Toast.makeText(this, "请先勾选要操作的类别", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.toast_select_first), Toast.LENGTH_SHORT).show();
                 return;
             }
             targets = new LinkedHashSet<>(selected);
@@ -1403,7 +1411,7 @@ public final class MainActivity extends Activity
             targets = visibleKeySet();
             if (targets.isEmpty())
             {
-                Toast.makeText(this, "列表为空", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, getString(R.string.toast_list_empty), Toast.LENGTH_SHORT).show();
                 return;
             }
         }
@@ -1416,7 +1424,7 @@ public final class MainActivity extends Activity
         persistOverrides();
         renderList();
         Toast.makeText(this,
-                (block ? "已拦截 " : "已允许 ") + targets.size() + " 项",
+                getString(block ? R.string.toast_blocked_n_fmt : R.string.toast_allowed_n_fmt, targets.size()),
                 Toast.LENGTH_SHORT).show();
     }
 
@@ -1575,7 +1583,7 @@ public final class MainActivity extends Activity
         return null;
     }
 
-    private static String displayName(ChannelRecord r)
+    private String displayName(ChannelRecord r)
     {
         if (!TextUtils.isEmpty(r.name))
         {
@@ -1585,7 +1593,7 @@ public final class MainActivity extends Activity
         {
             return r.id;
         }
-        return "(无名称)";
+        return getString(R.string.unknown_name);
     }
 
     private void refreshStatus()
@@ -1597,8 +1605,9 @@ public final class MainActivity extends Activity
 
         boolean safeMode = safeModeCached;
         String state = safeMode
-                ? "⚠ 安全模式已触发，Hook 已停用"
-                : (masterSwitch != null && masterSwitch.isChecked() ? "正常运行" : "总开关已关闭");
+                ? getString(R.string.state_safe_mode)
+                : (masterSwitch != null && masterSwitch.isChecked()
+                        ? getString(R.string.state_running) : getString(R.string.state_master_off));
 
         int count = countRules(rulesInput == null
                 ? prefs().getString(RegexConfig.KEY_RULES, "")
@@ -1609,10 +1618,10 @@ public final class MainActivity extends Activity
                 : contentRulesInput.getText().toString());
         boolean contentOn = contentEnabledSwitch != null && contentEnabledSwitch.isChecked();
 
-        statusView.setText("状态：" + state
-                + "\n自定义正则：" + count + " 条 · 内置默认：1 条 · 白名单：" + allowCount
-                + " 条 · App白名单：" + appWhitelist.size() + " 个 · 单独覆盖：" + overrides.size() + " 项"
-                + "\n内容级拦截：" + (contentOn ? "开启" : "关闭") + " · 内容规则：" + contentCount + " 条");
+        statusView.setText(getString(R.string.status_text_fmt, state, count, allowCount,
+                appWhitelist.size(), overrides.size(),
+                contentOn ? getString(R.string.content_on) : getString(R.string.content_off),
+                contentCount));
 
         if (safeMode)
         {

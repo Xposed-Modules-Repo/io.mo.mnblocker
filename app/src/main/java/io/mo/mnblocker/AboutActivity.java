@@ -1,6 +1,7 @@
 package io.mo.mnblocker;
 
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -12,6 +13,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -23,12 +25,20 @@ public final class AboutActivity extends Activity
     private static final int COLOR_CARD = 0xFFFFFFFF;
     private static final int COLOR_TEXT = 0xFF172033;
     private static final int COLOR_SUB = 0xFF6D7484;
+    private static final int COLOR_LINE = 0xFFE7EAF0;
     private static final int COLOR_LINK = 0xFF254FD8;
+    private static final int COLOR_PRIMARY = 0xFF3F6DF6;
     private static final String SOURCE_URL = "https://github.com/lm060719/io.mo.mnblocker";
 
     /** Hidden debug entrance: tap the icon or name 5 times. */
     private int tapCount;
     private long lastTapTime;
+
+    @Override
+    protected void attachBaseContext(Context newBase)
+    {
+        super.attachBaseContext(LocaleManager.wrap(newBase));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
@@ -48,6 +58,7 @@ public final class AboutActivity extends Activity
 
         root.addView(appInfoBlock());
         root.addView(descriptionCard());
+        root.addView(languageCard());
         root.addView(sourceCard());
 
         setContentView(scroll);
@@ -82,7 +93,7 @@ public final class AboutActivity extends Activity
         box.addView(name, nameLp);
 
         TextView version = new TextView(this);
-        version.setText("版本号 " + versionName());
+        version.setText(getString(R.string.about_version_fmt, versionName()));
         version.setTextColor(COLOR_SUB);
         version.setTextSize(13);
         version.setGravity(Gravity.CENTER);
@@ -115,10 +126,7 @@ public final class AboutActivity extends Activity
         LinearLayout card = cardLayout();
 
         TextView description = new TextView(this);
-        description.setText("说明：\n"
-                + "• 开关 ON = 拦截该类别通知，OFF = 允许。\n"
-                + "• 手动开关属于单独覆盖，优先级高于正则。\n"
-                + "• Hook 日志：" + HookLogger.DIR + "/hook.log");
+        description.setText(getString(R.string.about_description, HookLogger.DIR));
         description.setTextSize(12);
         description.setTextColor(COLOR_SUB);
         description.setLineSpacing(dp(3), 1.0f);
@@ -127,12 +135,87 @@ public final class AboutActivity extends Activity
         return card;
     }
 
+    private View languageCard()
+    {
+        LinearLayout card = cardLayout();
+
+        TextView title = new TextView(this);
+        title.setText(getString(R.string.about_language_title));
+        title.setTextColor(COLOR_TEXT);
+        title.setTextSize(17);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        card.addView(title);
+
+        TextView desc = new TextView(this);
+        desc.setText(getString(R.string.about_language_desc));
+        desc.setTextSize(12);
+        desc.setTextColor(COLOR_SUB);
+        desc.setPadding(0, dp(4), 0, dp(12));
+        card.addView(desc);
+
+        String current = LocaleManager.getLanguage(this);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button zh = languageButton(getString(R.string.lang_zh_label),
+                LocaleManager.LANG_ZH.equals(current));
+        zh.setOnClickListener(v -> onLanguageSelected(LocaleManager.LANG_ZH));
+        LinearLayout.LayoutParams zhLp = new LinearLayout.LayoutParams(0, dp(44), 1f);
+        zhLp.rightMargin = dp(8);
+        row.addView(zh, zhLp);
+
+        Button en = languageButton(getString(R.string.lang_en_label),
+                LocaleManager.LANG_EN.equals(current));
+        en.setOnClickListener(v -> onLanguageSelected(LocaleManager.LANG_EN));
+        row.addView(en, new LinearLayout.LayoutParams(0, dp(44), 1f));
+
+        card.addView(row);
+        return card;
+    }
+
+    private Button languageButton(String text, boolean selected)
+    {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(14);
+        b.setTypeface(selected ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+        if (selected)
+        {
+            b.setTextColor(Color.WHITE);
+            b.setBackground(roundBg(COLOR_PRIMARY, dp(12)));
+        }
+        else
+        {
+            b.setTextColor(COLOR_TEXT);
+            b.setBackground(roundStrokeBg(COLOR_CARD, dp(12), COLOR_LINE, 1));
+        }
+        return b;
+    }
+
+    /** Persists the pick and restarts the whole task so every screen re-reads
+     *  its strings against the new locale (attachBaseContext only runs once,
+     *  at activity creation). */
+    private void onLanguageSelected(String lang)
+    {
+        if (lang.equals(LocaleManager.getLanguage(this)))
+        {
+            return;
+        }
+        LocaleManager.setLanguage(this, lang);
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(intent);
+        finish();
+    }
+
     private View sourceCard()
     {
         LinearLayout card = cardLayout();
 
         TextView title = new TextView(this);
-        title.setText("源码");
+        title.setText(getString(R.string.about_source_title));
         title.setTextColor(COLOR_TEXT);
         title.setTextSize(17);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -192,6 +275,13 @@ public final class AboutActivity extends Activity
         GradientDrawable gd = new GradientDrawable();
         gd.setColor(color);
         gd.setCornerRadius(radius);
+        return gd;
+    }
+
+    private GradientDrawable roundStrokeBg(int color, int radius, int strokeColor, int strokeWidth)
+    {
+        GradientDrawable gd = roundBg(color, radius);
+        gd.setStroke(strokeWidth, strokeColor);
         return gd;
     }
 

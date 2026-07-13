@@ -66,6 +66,12 @@ public final class WhitelistActivity extends Activity
     private final Collator zhCollator = Collator.getInstance(Locale.CHINA);
 
     @Override
+    protected void attachBaseContext(Context newBase)
+    {
+        super.attachBaseContext(LocaleManager.wrap(newBase));
+    }
+
+    @Override
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
@@ -103,13 +109,13 @@ public final class WhitelistActivity extends Activity
         back.setTextSize(30);
         back.setTextColor(COLOR_TEXT);
         back.setGravity(Gravity.CENTER);
-        back.setContentDescription("返回");
+        back.setContentDescription(getString(R.string.nav_back));
         back.setClickable(true);
         back.setOnClickListener(v -> finish());
         row.addView(back, new LinearLayout.LayoutParams(dp(40), dp(40)));
 
         TextView title = new TextView(this);
-        title.setText("白名单设置");
+        title.setText(getString(R.string.whitelist_title));
         title.setTextSize(22);
         title.setTextColor(COLOR_TEXT);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -128,21 +134,21 @@ public final class WhitelistActivity extends Activity
     private View allowCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("放行白名单（正则）",
-                "命中的通知类别永不被拦截，优先级高于拦截规则。"));
+        card.addView(sectionTitle(getString(R.string.allow_card_title),
+                getString(R.string.allow_card_desc)));
 
         allowInput = new EditText(this);
         allowInput.setMinLines(4);
         allowInput.setGravity(Gravity.TOP | Gravity.START);
         allowInput.setTextSize(13);
         allowInput.setTextColor(COLOR_TEXT);
-        allowInput.setHint("例如：\n.*(验证码|动态密码).*\n.*(微信|QQ|短信).*");
+        allowInput.setHint(getString(R.string.allow_hint));
         allowInput.setHintTextColor(0xFFB0B6C3);
         allowInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         allowInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
         card.addView(allowInput);
 
-        Button save = primaryButton("保存放行白名单");
+        Button save = primaryButton(getString(R.string.action_save_allow));
         save.setOnClickListener(v -> onSaveAllow());
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
@@ -156,11 +162,11 @@ public final class WhitelistActivity extends Activity
         String bad = firstInvalidRegex(allowInput.getText().toString());
         if (bad != null)
         {
-            Toast.makeText(this, "正则有误：" + bad, Toast.LENGTH_LONG).show();
+            Toast.makeText(this, getString(R.string.toast_regex_invalid_fmt, bad), Toast.LENGTH_LONG).show();
             return;
         }
         boolean ok = persist();
-        Toast.makeText(this, ok ? "已保存并同步到 Hook" : "已保存到本地，但同步失败，请检查 root 授权",
+        Toast.makeText(this, ok ? getString(R.string.toast_saved_synced) : getString(R.string.toast_allow_save_partial),
                 Toast.LENGTH_LONG).show();
     }
 
@@ -171,10 +177,10 @@ public final class WhitelistActivity extends Activity
     private View appCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("App 白名单",
-                "名单内应用的通知完全不被拦截（含通道级与内容级）。"));
+        card.addView(sectionTitle(getString(R.string.app_card_title),
+                getString(R.string.app_card_desc)));
 
-        Button add = primaryButton("添加应用");
+        Button add = primaryButton(getString(R.string.action_add_app));
         add.setOnClickListener(v -> onAddApp());
         LinearLayout.LayoutParams addLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
@@ -189,7 +195,7 @@ public final class WhitelistActivity extends Activity
 
     private void onAddApp()
     {
-        Toast.makeText(this, "正在加载应用列表…", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, getString(R.string.toast_loading_apps), Toast.LENGTH_SHORT).show();
         new Thread(() ->
         {
             final PackageManager pm = getPackageManager();
@@ -237,7 +243,7 @@ public final class WhitelistActivity extends Activity
         box.setPadding(dp(20), dp(8), dp(20), 0);
 
         EditText search = new EditText(this);
-        search.setHint("搜索应用名或包名");
+        search.setHint(getString(R.string.picker_search_hint));
         search.setHintTextColor(0xFFB0B6C3);
         search.setTextColor(COLOR_TEXT);
         search.setTextSize(14);
@@ -249,7 +255,7 @@ public final class WhitelistActivity extends Activity
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         final TextView empty = new TextView(this);
-        empty.setText("没有匹配的应用");
+        empty.setText(getString(R.string.picker_no_match));
         empty.setTextColor(COLOR_SUB);
         empty.setTextSize(13);
         empty.setGravity(Gravity.CENTER);
@@ -329,19 +335,20 @@ public final class WhitelistActivity extends Activity
         });
 
         new AlertDialog.Builder(this)
-                .setTitle("选择要放行的应用")
+                .setTitle(getString(R.string.picker_title))
                 .setView(box)
-                .setPositiveButton("确定", (d, w) ->
+                .setPositiveButton(getString(R.string.action_confirm), (d, w) ->
                 {
                     appWhitelist.clear();
                     appWhitelist.addAll(picked);
                     boolean ok = persist();
                     renderAppList();
                     Toast.makeText(this,
-                            ok ? "已保存 " + appWhitelist.size() + " 个应用" : "保存失败，请检查 root 授权",
+                            ok ? getString(R.string.toast_app_whitelist_saved_fmt, appWhitelist.size())
+                                    : getString(R.string.toast_app_whitelist_save_failed),
                             Toast.LENGTH_SHORT).show();
                 })
-                .setNegativeButton("取消", null)
+                .setNegativeButton(getString(R.string.action_cancel), null)
                 .show();
     }
 
@@ -351,7 +358,7 @@ public final class WhitelistActivity extends Activity
         if (appWhitelist.isEmpty())
         {
             TextView empty = new TextView(this);
-            empty.setText("尚未添加任何应用。点击“添加应用”选择要整体放行的 App。");
+            empty.setText(getString(R.string.app_whitelist_empty));
             empty.setTextSize(12);
             empty.setTextColor(COLOR_SUB);
             empty.setGravity(Gravity.CENTER);
@@ -468,7 +475,7 @@ public final class WhitelistActivity extends Activity
         row.addView(text);
 
         Button remove = new Button(this);
-        remove.setText("移除");
+        remove.setText(getString(R.string.action_remove));
         remove.setAllCaps(false);
         remove.setTextSize(12);
         remove.setTypeface(Typeface.DEFAULT_BOLD);

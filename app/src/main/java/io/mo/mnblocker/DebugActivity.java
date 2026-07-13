@@ -1,6 +1,7 @@
 package io.mo.mnblocker;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -44,6 +45,12 @@ public final class DebugActivity extends Activity
     private Button[] levelButtons;
     private int currentLevel = HookLogger.LEVEL_ERROR;
     private FrameLayout rootFrame;
+
+    @Override
+    protected void attachBaseContext(Context newBase)
+    {
+        super.attachBaseContext(LocaleManager.wrap(newBase));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
@@ -99,14 +106,14 @@ public final class DebugActivity extends Activity
         box.setPadding(0, dp(10), 0, dp(16));
 
         TextView title = new TextView(this);
-        title.setText("\uD83D\uDEE0 调试模式");
+        title.setText(getString(R.string.debug_title));
         title.setTextColor(COLOR_TEXT);
         title.setTextSize(24);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         box.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("以下选项仅用于排查问题，日常使用无需开启。");
+        sub.setText(getString(R.string.debug_subtitle));
         sub.setTextColor(COLOR_SUB);
         sub.setTextSize(13);
         sub.setPadding(0, dp(6), 0, 0);
@@ -121,8 +128,7 @@ public final class DebugActivity extends Activity
         card.setBackground(roundBg(COLOR_WARN_BG, dp(22)));
 
         TextView warn = new TextView(this);
-        warn.setText("\u26A0 开启日志输出会在每次通知类别事件时写入文件，"
-                + "可能对性能有轻微影响。排查完毕后请关闭。");
+        warn.setText(getString(R.string.debug_warning));
         warn.setTextColor(COLOR_WARN_TEXT);
         warn.setTextSize(12);
         warn.setLineSpacing(dp(2), 1.0f);
@@ -136,7 +142,7 @@ public final class DebugActivity extends Activity
         LinearLayout card = cardLayout();
 
         TextView title = new TextView(this);
-        title.setText("日志控制");
+        title.setText(getString(R.string.logging_card_title));
         title.setTextColor(COLOR_TEXT);
         title.setTextSize(17);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -155,13 +161,13 @@ public final class DebugActivity extends Activity
         labelCol.setLayoutParams(labelLp);
 
         TextView label = new TextView(this);
-        label.setText("输出日志");
+        label.setText(getString(R.string.debug_output_log_title));
         label.setTextColor(COLOR_TEXT);
         label.setTextSize(15);
         labelCol.addView(label);
 
         TextView desc = new TextView(this);
-        desc.setText("开启后 Hook 事件会写入 hook.log，默认关闭。");
+        desc.setText(getString(R.string.debug_output_log_desc));
         desc.setTextColor(COLOR_SUB);
         desc.setTextSize(11);
         desc.setPadding(0, dp(2), 0, 0);
@@ -178,7 +184,7 @@ public final class DebugActivity extends Activity
                     runOnUiThread(() -> {
                         setCheckedSilently(!checked);
                         Toast.makeText(this,
-                                "操作失败，请检查 root 权限",
+                                getString(R.string.toast_op_failed_root),
                                 Toast.LENGTH_SHORT).show();
                     });
                 }
@@ -210,13 +216,13 @@ public final class DebugActivity extends Activity
         xpLabelCol.setLayoutParams(xpLabelLp);
 
         TextView xpLabel = new TextView(this);
-        xpLabel.setText("禁用输出LSP模块日志");
+        xpLabel.setText(getString(R.string.debug_disable_xposed_log_title));
         xpLabel.setTextColor(COLOR_TEXT);
         xpLabel.setTextSize(15);
         xpLabelCol.addView(xpLabel);
 
         TextView xpDesc = new TextView(this);
-        xpDesc.setText("开启后将不再向 LSPosed 模块日志输出任何日志");
+        xpDesc.setText(getString(R.string.debug_disable_xposed_log_desc));
         xpDesc.setTextColor(COLOR_SUB);
         xpDesc.setTextSize(11);
         xpDesc.setPadding(0, dp(2), 0, 0);
@@ -235,7 +241,7 @@ public final class DebugActivity extends Activity
                         setXposedDisabledSilently(!checked);
                         setLevelButtonsEnabled(checked);
                         Toast.makeText(this,
-                                "操作失败，请检查 root 权限",
+                                getString(R.string.toast_op_failed_root),
                                 Toast.LENGTH_SHORT).show();
                     });
                 }
@@ -260,13 +266,13 @@ public final class DebugActivity extends Activity
         lvlSection.setPadding(0, dp(4), 0, dp(4));
 
         TextView lvlLabel = new TextView(this);
-        lvlLabel.setText("LSP日志输出级别");
+        lvlLabel.setText(getString(R.string.debug_log_level_title));
         lvlLabel.setTextColor(COLOR_TEXT);
         lvlLabel.setTextSize(15);
         lvlSection.addView(lvlLabel);
 
         TextView lvlDesc = new TextView(this);
-        lvlDesc.setText("仅输出所选级别及以上的日志到 LSPosed");
+        lvlDesc.setText(getString(R.string.debug_log_level_desc));
         lvlDesc.setTextColor(COLOR_SUB);
         lvlDesc.setTextSize(11);
         lvlDesc.setPadding(0, dp(2), 0, dp(10));
@@ -316,7 +322,7 @@ public final class DebugActivity extends Activity
                     boolean ok = ShellUtils.setXposedLogLevel(lvl);
                     if (!ok) {
                         runOnUiThread(() -> Toast.makeText(this,
-                                "操作失败，请检查 root 权限",
+                                getString(R.string.toast_op_failed_root),
                                 Toast.LENGTH_SHORT).show());
                     }
                 }).start();
@@ -340,21 +346,21 @@ public final class DebugActivity extends Activity
         LinearLayout card = cardLayout();
 
         TextView title = new TextView(this);
-        title.setText("日志导出");
+        title.setText(getString(R.string.export_card_title));
         title.setTextColor(COLOR_TEXT);
         title.setTextSize(17);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         card.addView(title);
 
         TextView desc = new TextView(this);
-        desc.setText("将 hook.log 复制到 /sdcard/ 以便分享。");
+        desc.setText(getString(R.string.export_card_desc));
         desc.setTextColor(COLOR_SUB);
         desc.setTextSize(12);
         desc.setPadding(0, dp(6), 0, dp(14));
         card.addView(desc);
 
         Button exportBtn = new Button(this);
-        exportBtn.setText("导出 Hook 日志");
+        exportBtn.setText(getString(R.string.action_export_log));
         exportBtn.setTextColor(Color.WHITE);
         exportBtn.setTextSize(14);
         exportBtn.setTypeface(Typeface.DEFAULT_BOLD);
@@ -377,17 +383,17 @@ public final class DebugActivity extends Activity
         new Thread(() -> {
             boolean exists = ShellUtils.hookLogExists();
             if (!exists) {
-                runOnUiThread(() -> showFadeHint("无日志"));
+                runOnUiThread(() -> showFadeHint(getString(R.string.hint_no_log)));
                 return;
             }
             boolean ok = ShellUtils.exportHookLog();
             runOnUiThread(() -> {
                 if (ok) {
                     Toast.makeText(this,
-                            "已导出到 /sdcard/hook.log",
+                            getString(R.string.toast_exported),
                             Toast.LENGTH_SHORT).show();
                 } else {
-                    showFadeHint("导出失败，请检查 root 权限");
+                    showFadeHint(getString(R.string.hint_export_failed));
                 }
             });
         }).start();
@@ -438,7 +444,7 @@ public final class DebugActivity extends Activity
                     runOnUiThread(() -> {
                         setCheckedSilently(!c);
                         Toast.makeText(this,
-                                "操作失败，请检查 root 权限",
+                                getString(R.string.toast_op_failed_root),
                                 Toast.LENGTH_SHORT).show();
                     });
                 }
@@ -459,7 +465,7 @@ public final class DebugActivity extends Activity
                         setXposedDisabledSilently(!c);
                         setLevelButtonsEnabled(c);
                         Toast.makeText(this,
-                                "操作失败，请检查 root 权限",
+                                getString(R.string.toast_op_failed_root),
                                 Toast.LENGTH_SHORT).show();
                     });
                 }

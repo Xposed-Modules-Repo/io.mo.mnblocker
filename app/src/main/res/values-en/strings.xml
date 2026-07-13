@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Marketing Notification Blocker</string>
+    <string name="xposed_description">Hooks the system framework to auto-detect and silence notification channels matching keywords like "marketing". Supports regex and batch regex rules, with built-in safe mode and hook logging.</string>
+
+    <!-- ===== AboutActivity ===== -->
+    <string name="about_version_fmt">Version %1$s</string>
+    <string name="about_description"><![CDATA[Notes:
+• Switch ON = block that channel\'s notifications, OFF = allow.
+• A manual switch is a per-channel override — it beats the regex rules.
+• Hook log: %1$s/hook.log]]></string>
+    <string name="about_source_title">Source</string>
+    <string name="about_language_title">Language</string>
+    <string name="about_language_desc">Choose the display language. The app restarts after switching.</string>
+    <string name="lang_zh_label">简体中文</string>
+    <string name="lang_en_label">English</string>
+
+    <!-- ===== Shared / generic ===== -->
+    <string name="action_cancel">Cancel</string>
+    <string name="nav_about">About</string>
+
+    <!-- ===== MainActivity ===== -->
+    <string name="main_no_root_hint">Root not granted — the module may not work properly</string>
+    <string name="whitelist_title">Whitelist Settings</string>
+    <string name="whitelist_entry_desc">Allow-regex whitelist and App whitelist</string>
+    <string name="stats_title">Block Stats</string>
+    <string name="stats_ranking_title">Blocked Apps Ranking</string>
+    <string name="action_clear_count">Clear Count</string>
+    <string name="action_save_rules">Save Rules &amp; Switches</string>
+    <string name="tab_home">Home</string>
+    <string name="tab_matched">Matched</string>
+
+    <string name="hero_desc">Fine-tune per-app notification channels with regex and per-channel overrides.</string>
+    <string name="safe_mode_close_button">Disable Safe Mode</string>
+    <string name="safe_mode_dialog_message"><![CDATA[Safe mode is a protection that trips automatically when System UI keeps crashing. Once you\'ve confirmed your block rules are fixed, clearing the flag restores blocking.
+
+The module watches this flag from inside the system process, so it usually recovers in place without a reboot. If it does not recover after a while, reboot once manually.]]></string>
+    <string name="safe_mode_confirm">Clear &amp; Restore</string>
+    <string name="safe_mode_clear_failed">Clear failed — check root authorization</string>
+    <string name="safe_mode_cleared_toast">Cleared. Blocking will resume automatically, no reboot needed.</string>
+
+    <string name="global_switch_title">Global Switches</string>
+    <string name="switch_master_enable">Enable Blocking</string>
+    <string name="switch_match_desc_title">Match Description Text</string>
+    <string name="switch_match_desc_sub">Also checks the channel description for a more complete match. </string>
+
+    <string name="rules_card_title">Regex Rules</string>
+    <string name="rules_hint"><![CDATA[Enter one regex rule per line (use | within a line to match multiple keywords)
+
+Examples:
+.*营销.*
+.*(推广|促销|优惠).*
+^ads?_.*]]></string>
+    <string name="content_section_title">Content-Level Blocking (Experimental)</string>
+    <string name="content_section_desc">Matches a notification\'s title/text and blocks the whole notification — useful for marketing pushed on a shared or "default" channel that channel-level blocking cannot reach. Applies to every notification; after updating the module, reboot once to load the hook, then switches and rule edits take effect instantly. Uses its own rules below, and is protected by the same allow-whitelist above; foreground-service notifications are never blocked. Off by default — enable with care.</string>
+    <string name="switch_content_enable_title">Enable Content-Level Blocking</string>
+    <string name="switch_content_enable_sub">Matches content when a notification is enqueued (experimental).</string>
+    <string name="content_rules_hint"><![CDATA[Content-block regex, one rule per line (use | within a line to match multiple keywords)
+
+Example:
+.*(限时特惠|内购|直播间).*]]></string>
+
+    <string name="channel_card_title">Detected Notification Channels</string>
+    <string name="switch_only_matched_title">Show Only Regex-Matched Channels</string>
+    <string name="switch_only_matched_sub">When off, shows every channel the hook has recorded. </string>
+    <string name="action_refresh">Refresh</string>
+    <string name="toast_refreshed">Refreshed</string>
+    <string name="sort_by_app">By App</string>
+    <string name="sort_by_alpha">By Name</string>
+    <string name="action_multi_select">Multi-select</string>
+    <string name="multi_select_active">Selecting</string>
+    <string name="action_block_all">Block All</string>
+    <string name="action_allow_all">Allow All</string>
+    <string name="action_select_all_clear">Select All / Clear</string>
+
+    <string name="toast_select_first">Select channels first</string>
+    <string name="toast_list_empty">List is empty</string>
+    <string name="toast_blocked_n_fmt">Blocked %1$d item(s)</string>
+    <string name="toast_allowed_n_fmt">Allowed %1$d item(s)</string>
+
+    <string name="batch_hint_multi_fmt">Multi-select mode: batch buttons apply only to the %1$d checked item(s)</string>
+    <string name="batch_hint_normal_fmt">Normal mode: batch buttons apply to the %1$d currently shown item(s)</string>
+
+    <string name="empty_no_data">No data yet. Tap refresh after an app creates a notification channel; if still empty, check root read access.</string>
+    <string name="empty_no_regex_match">No channels currently match the regex rules. Turn off "Show only regex-matched channels" to see everything. </string>
+
+    <string name="list_header_zero_fmt">Showing 0 · Recorded %1$d</string>
+    <string name="list_header_fmt">Showing %1$d · Recorded %2$d · %3$d currently blocked</string>
+
+    <string name="source_override">Override</string>
+    <string name="source_app_whitelist">App Whitelist</string>
+    <string name="source_allow_whitelist">Allowed by Whitelist</string>
+    <string name="source_regex_matched">Regex Matched</string>
+    <string name="source_regex_not_matched">No Regex Match</string>
+    <string name="status_line_fmt">%1$s  ·  Currently: %2$s</string>
+    <string name="status_blocked">Blocked</string>
+    <string name="status_allowed">Allowed</string>
+    <string name="unknown_name">(no name)</string>
+
+    <string name="state_safe_mode">⚠ Safe mode triggered — hooks disabled</string>
+    <string name="state_running">Running normally</string>
+    <string name="state_master_off">Master switch is off</string>
+    <string name="status_text_fmt"><![CDATA[Status: %1$s
+Custom regex: %2$d · Built-in default: 1 · Whitelist: %3$d · App whitelist: %4$d · Overrides: %5$d
+Content-level blocking: %6$s · Content rules: %7$d]]></string>
+    <string name="content_on">On</string>
+    <string name="content_off">Off</string>
+
+    <string name="stat_tile_content_blocks">Content Blocks (Total)</string>
+    <string name="stat_tile_channel_blocks">Blocked Channels</string>
+    <string name="stat_tile_apps">Apps Involved</string>
+    <string name="stat_tile_rules">Block Rules</string>
+    <string name="stats_last_blocked_fmt">Last content block: %1$s</string>
+    <string name="stats_empty">No blocks yet. Once blocks happen, they will be ranked here by app.</string>
+    <string name="ranking_meta_fmt">Channel %1$d · Content %2$d  ·  %3$s</string>
+
+    <string name="confirm_reset_stats_title">Clear Content Block Count</string>
+    <string name="confirm_reset_stats_msg">Reset the content-block count and per-app ranking to zero? This does not affect your rules or switches.</string>
+    <string name="action_clear">Clear</string>
+    <string name="toast_cleared">Cleared</string>
+    <string name="toast_clear_failed">Clear failed — check root authorization</string>
+
+    <string name="toast_regex_invalid_fmt">Invalid regex: %1$s</string>
+    <string name="toast_saved_synced">Saved and synced to the hook</string>
+    <string name="toast_saved_sync_failed">Saved locally, but syncing to the hook failed — check root authorization</string>
+    <string name="toast_config_sync_failed_fmt">Failed to sync to %1$s — check root authorization</string>
+
+    <!-- ===== WhitelistActivity ===== -->
+    <string name="nav_back">Back</string>
+    <string name="allow_card_title">Allow Whitelist (Regex)</string>
+    <string name="allow_card_desc">Matched channels are never blocked — this takes priority over the block rules.</string>
+    <string name="allow_hint"><![CDATA[Example:
+.*(验证码|动态密码).*
+.*(微信|QQ|短信).*]]></string>
+    <string name="action_save_allow">Save Allow Whitelist</string>
+    <string name="toast_allow_save_partial">Saved locally, but syncing failed — check root authorization</string>
+
+    <string name="app_card_title">App Whitelist</string>
+    <string name="app_card_desc">Notifications from listed apps are never blocked (channel-level and content-level).</string>
+    <string name="action_add_app">Add App</string>
+    <string name="toast_loading_apps">Loading app list…</string>
+    <string name="picker_search_hint">Search app name or package</string>
+    <string name="picker_no_match">No matching apps</string>
+    <string name="picker_title">Select Apps to Allow</string>
+    <string name="action_confirm">OK</string>
+    <string name="toast_app_whitelist_saved_fmt">Saved %1$d app(s)</string>
+    <string name="toast_app_whitelist_save_failed">Save failed — check root authorization</string>
+    <string name="app_whitelist_empty">No apps added yet. Tap "Add App" to pick apps to fully allow.</string>
+    <string name="action_remove">Remove</string>
+
+    <!-- ===== DebugActivity ===== -->
+    <string name="debug_title">🛠 Debug Mode</string>
+    <string name="debug_subtitle">These options are for troubleshooting only — no need to enable them for daily use.</string>
+    <string name="debug_warning">⚠ Enabling log output writes to a file on every channel event, which may slightly affect performance. Turn it off when you\'re done troubleshooting.</string>
+    <string name="logging_card_title">Log Control</string>
+    <string name="debug_output_log_title">Output Log</string>
+    <string name="debug_output_log_desc">When on, hook events are written to hook.log. Off by default.</string>
+    <string name="toast_op_failed_root">Operation failed — check root permission</string>
+    <string name="debug_disable_xposed_log_title">Disable LSPosed Module Log Output</string>
+    <string name="debug_disable_xposed_log_desc">When on, no logs are sent to the LSPosed module log</string>
+    <string name="debug_log_level_title">LSPosed Log Level</string>
+    <string name="debug_log_level_desc">Only logs at or above the selected level are sent to LSPosed</string>
+    <string name="export_card_title">Log Export</string>
+    <string name="export_card_desc">Copies hook.log to /sdcard/ for sharing.</string>
+    <string name="action_export_log">Export Hook Log</string>
+    <string name="hint_no_log">No log</string>
+    <string name="toast_exported">Exported to /sdcard/hook.log</string>
+    <string name="hint_export_failed">Export failed — check root permission</string>
+</resources>
