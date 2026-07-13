@@ -117,7 +117,6 @@ public final class AboutActivity extends Activity
         description.setText("说明：\n"
                 + "• 开关 ON = 拦截该类别通知，OFF = 允许。\n"
                 + "• 手动开关属于单独覆盖，优先级高于正则。\n"
-                + "• 安全模式触发后，可在主页点“关闭安全模式”恢复（需 root，通常无需重启）。\n"
                 + "• Hook 日志：" + HookLogger.DIR + "/hook.log");
         description.setTextSize(12);
         description.setTextColor(COLOR_SUB);

@@ -213,7 +213,7 @@ public final class MainActivity extends Activity
         text.addView(title);
 
         TextView desc = new TextView(this);
-        desc.setText("放行白名单（正则）与 App 白名单，保护验证码 / IM 等不被拦截。");
+        desc.setText("放行白名单（正则）与 App 白名单");
         desc.setTextSize(12);
         desc.setTextColor(COLOR_SUB);
         desc.setPadding(0, dp(4), 0, 0);
@@ -260,15 +260,14 @@ public final class MainActivity extends Activity
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout tilesCard = cardLayout();
-        tilesCard.addView(sectionTitle("拦截统计", "均为真实统计；环比趋势与历史暂未采集。"));
+        tilesCard.addView(sectionTitle("拦截统计", null));
         statsTilesContainer = new LinearLayout(this);
         statsTilesContainer.setOrientation(LinearLayout.VERTICAL);
         tilesCard.addView(statsTilesContainer);
         root.addView(tilesCard);
 
         LinearLayout rankCard = cardLayout();
-        rankCard.addView(sectionTitle("拦截命中应用排行",
-                "按“通道拦截 + 内容拦截”合计次数从高到低。"));
+        rankCard.addView(sectionTitle("拦截命中应用排行", null));
         rankingContainer = new LinearLayout(this);
         rankingContainer.setOrientation(LinearLayout.VERTICAL);
         rankCard.addView(rankingContainer);
@@ -476,9 +475,9 @@ public final class MainActivity extends Activity
     private View globalCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("全局开关", "控制 Hook 是否工作，以及是否匹配通知类别描述。"));
+        card.addView(sectionTitle("全局开关", null));
 
-        masterSwitch = cleanSwitch("启用拦截", "总开关关闭后，Hook 不再拦截通知类别。");
+        masterSwitch = cleanSwitch("启用拦截", null);
         masterSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
         card.addView(masterSwitch);
 
@@ -494,22 +493,15 @@ public final class MainActivity extends Activity
     private View rulesCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("正则规则", "每行一条规则，支持 id / 名称 / 描述匹配。"));
-
-        TextView hint = new TextView(this);
-        hint.setText("示例：\n.*营销.*\n.*(推广|促销|优惠).*\n^ads?_.*");
-        hint.setTextColor(COLOR_SUB);
-        hint.setTextSize(12);
-        hint.setPadding(dp(12), dp(10), dp(12), dp(10));
-        hint.setBackground(roundStrokeBg(0xFFF8FAFF, dp(14), COLOR_LINE, 1));
-        card.addView(hint);
+        card.addView(sectionTitle("正则规则", null));
 
         rulesInput = new EditText(this);
         rulesInput.setMinLines(5);
         rulesInput.setGravity(Gravity.TOP | Gravity.START);
         rulesInput.setTextSize(13);
         rulesInput.setTextColor(COLOR_TEXT);
-        rulesInput.setHint("输入正则规则，一行一个");
+        rulesInput.setHint("输入正则规则，一行一条（一行内可用 | 匹配多个关键词）\n\n"
+                + "示例：\n.*营销.*\n.*(推广|促销|优惠).*\n^ads?_.*");
         rulesInput.setHintTextColor(0xFFB0B6C3);
         rulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         rulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
@@ -548,7 +540,8 @@ public final class MainActivity extends Activity
         contentRulesInput.setGravity(Gravity.TOP | Gravity.START);
         contentRulesInput.setTextSize(13);
         contentRulesInput.setTextColor(COLOR_TEXT);
-        contentRulesInput.setHint("内容拦截正则，一行一个，例如：\n.*(限时特惠|内购|直播间).*");
+        contentRulesInput.setHint("内容拦截正则，一行一条（一行内可用 | 匹配多个关键词）\n\n"
+                + "示例：\n.*(限时特惠|内购|直播间).*");
         contentRulesInput.setHintTextColor(0xFFB0B6C3);
         contentRulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         contentRulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
@@ -565,7 +558,7 @@ public final class MainActivity extends Activity
     private View channelCard()
     {
         LinearLayout card = cardLayout();
-        card.addView(sectionTitle("已检测到的通知类别", "列表来自 system_server 中 Hook 记录的实时数据。"));
+        card.addView(sectionTitle("已检测到的通知类别", null));
 
         listHeader = new TextView(this);
         listHeader.setTextSize(12);
@@ -1628,12 +1621,15 @@ public final class MainActivity extends Activity
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
         box.addView(titleView);
 
-        TextView descView = new TextView(this);
-        descView.setText(desc);
-        descView.setTextSize(12);
-        descView.setTextColor(COLOR_SUB);
-        descView.setPadding(0, dp(4), 0, 0);
-        box.addView(descView);
+        if (!TextUtils.isEmpty(desc))
+        {
+            TextView descView = new TextView(this);
+            descView.setText(desc);
+            descView.setTextSize(12);
+            descView.setTextColor(COLOR_SUB);
+            descView.setPadding(0, dp(4), 0, 0);
+            box.addView(descView);
+        }
 
         return box;
     }
@@ -1641,7 +1637,7 @@ public final class MainActivity extends Activity
     private Switch cleanSwitch(String title, String sub)
     {
         Switch sw = new Switch(this);
-        sw.setText(title + "\n" + sub);
+        sw.setText(TextUtils.isEmpty(sub) ? title : title + "\n" + sub);
         sw.setTextSize(13);
         sw.setTextColor(COLOR_TEXT);
         sw.setPadding(0, dp(8), 0, dp(8));

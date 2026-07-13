@@ -91,7 +91,7 @@ public final class WhitelistActivity extends Activity
     {
         LinearLayout card = cardLayout();
         card.addView(sectionTitle("放行白名单（正则）",
-                "命中的通知类别永不被拦截，优先级高于拦截规则。用于保护验证码、即时通讯等重要通知。"));
+                "命中的通知类别永不被拦截，优先级高于拦截规则。"));
 
         allowInput = new EditText(this);
         allowInput.setMinLines(4);
@@ -134,7 +134,7 @@ public final class WhitelistActivity extends Activity
     {
         LinearLayout card = cardLayout();
         card.addView(sectionTitle("App 白名单",
-                "名单内应用的通知完全不被拦截（含通道级与内容级）。适合整体放行银行、即时通讯等应用。"));
+                "名单内应用的通知完全不被拦截（含通道级与内容级）。"));
 
         Button add = primaryButton("添加应用");
         add.setOnClickListener(v -> onAddApp());
