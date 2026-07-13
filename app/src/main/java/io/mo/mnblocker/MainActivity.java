@@ -272,6 +272,13 @@ public final class MainActivity extends Activity
         rankingContainer.setOrientation(LinearLayout.VERTICAL);
         rankCard.addView(rankingContainer);
         root.addView(rankCard);
+
+        Button clear = softButton("清空计数");
+        clear.setOnClickListener(v -> onResetContentStats());
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        clp.topMargin = dp(2);
+        root.addView(clear, clp);
         return scroll;
     }
 
@@ -279,15 +286,10 @@ public final class MainActivity extends Activity
     {
         LinearLayout row = rowLayout();
 
-        Button clear = softButton("清空计数");
-        clear.setOnClickListener(v -> onResetContentStats());
-        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        clp.rightMargin = dp(10);
-        row.addView(clear, clp);
-
         Button save = primaryButton("保存规则与开关");
         save.setOnClickListener(v -> onSaveRules());
-        row.addView(save, new LinearLayout.LayoutParams(0, dp(48), 2f));
+        row.addView(save, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
