@@ -73,6 +73,7 @@ public final class DebugActivity extends Activity
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         setContentView(rootFrame);
+        SystemBars.edgeToEdge(this, rootFrame, root, root);
 
         // Read current flag states in background.
         new Thread(() -> {

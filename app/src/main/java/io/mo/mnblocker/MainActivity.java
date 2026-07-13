@@ -142,9 +142,10 @@ public final class MainActivity extends Activity
         contentFrame.addView(pageStats, matchFrame());
         contentFrame.addView(pageMatched, matchFrame());
 
+        View tabBar = buildTabBar();
         outer.addView(contentFrame, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        outer.addView(buildTabBar(), new LinearLayout.LayoutParams(
+        outer.addView(tabBar, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -153,6 +154,10 @@ public final class MainActivity extends Activity
                 ViewGroup.LayoutParams.MATCH_PARENT));
 
         setContentView(rootFrame);
+
+        // Status-bar inset goes on the page stack, nav-bar inset on the tab bar —
+        // so the tab bar's card background is what fills the gesture-pill area.
+        SystemBars.edgeToEdge(this, rootFrame, outer, tabBar);
 
         showTab(0);
         loadSwitchesAndRules();
@@ -1184,11 +1189,18 @@ public final class MainActivity extends Activity
 
     private Comparator<ChannelRecord> comparator()
     {
-        if (sortMode == SORT_BY_APP)
+        if (SORT_BY_APP == sortMode)
         {
             return (a, b) ->
             {
-                int c = a.pkg.compareToIgnoreCase(b.pkg);
+                // Group by app, ordered by the label the header shows. Falling back
+                // to the package keeps each app's channels contiguous even when two
+                // apps happen to share a label.
+                int c = zhCollator.compare(appLabel(a.pkg), appLabel(b.pkg));
+                if (c == 0)
+                {
+                    c = a.pkg.compareToIgnoreCase(b.pkg);
+                }
                 if (c != 0)
                 {
                     return c;
@@ -1208,15 +1220,40 @@ public final class MainActivity extends Activity
         };
     }
 
-    private TextView appGroupHeader(String pkg)
+    private View appGroupHeader(String pkg)
     {
-        TextView t = new TextView(this);
-        t.setText(pkg);
-        t.setTextSize(11);
-        t.setTextColor(COLOR_SUB);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setPadding(dp(2), dp(14), dp(2), dp(6));
-        return t;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(2), dp(14), dp(2), dp(6));
+
+        ImageView icon = new ImageView(this);
+        icon.setImageDrawable(appIcon(pkg));
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(20), dp(20));
+        iconLp.rightMargin = dp(8);
+        row.addView(icon, iconLp);
+
+        TextView name = new TextView(this);
+        name.setText(appLabel(pkg));
+        name.setTextSize(12);
+        name.setTextColor(COLOR_TEXT);
+        name.setTypeface(Typeface.DEFAULT_BOLD);
+        row.addView(name);
+
+        // Keep the package visible — two apps can share a label, and it is what
+        // the per-channel override is actually keyed on.
+        TextView pkgView = new TextView(this);
+        pkgView.setText(pkg);
+        pkgView.setTextSize(10);
+        pkgView.setTextColor(COLOR_SUB);
+        pkgView.setSingleLine(true);
+        pkgView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+        LinearLayout.LayoutParams pkgLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        pkgLp.leftMargin = dp(8);
+        row.addView(pkgView, pkgLp);
+
+        return row;
     }
 
     private View channelRow(ChannelRecord r)

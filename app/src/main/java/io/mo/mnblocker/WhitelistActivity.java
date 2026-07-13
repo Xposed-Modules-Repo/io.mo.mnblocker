@@ -10,13 +10,19 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.BaseAdapter;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -63,7 +69,6 @@ public final class WhitelistActivity extends Activity
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
-        setTitle("白名单设置");
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -76,11 +81,44 @@ public final class WhitelistActivity extends Activity
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        root.addView(header());
         root.addView(allowCard());
         root.addView(appCard());
         setContentView(scroll);
+        SystemBars.edgeToEdge(this, scroll, root, root);
 
         loadCurrent();
+    }
+
+    /** In-page title, replacing the platform ActionBar this screen used to show. */
+    private View header()
+    {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(6), 0, dp(16));
+
+        TextView back = new TextView(this);
+        back.setText("‹");
+        back.setTextSize(30);
+        back.setTextColor(COLOR_TEXT);
+        back.setGravity(Gravity.CENTER);
+        back.setContentDescription("返回");
+        back.setClickable(true);
+        back.setOnClickListener(v -> finish());
+        row.addView(back, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        TextView title = new TextView(this);
+        title.setText("白名单设置");
+        title.setTextSize(22);
+        title.setTextColor(COLOR_TEXT);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = dp(6);
+        row.addView(title, lp);
+        return row;
     }
 
     // ------------------------------------------------------------------
@@ -184,34 +222,119 @@ public final class WhitelistActivity extends Activity
         }).start();
     }
 
+    /**
+     * Multi-select picker with a search box. The checked state is tracked by
+     * package name (not list position), so filtering the list never loses or
+     * misapplies a tick.
+     */
     private void showPicker(List<String[]> items)
     {
-        final int n = items.size();
-        final CharSequence[] labels = new CharSequence[n];
-        final String[] pkgs = new String[n];
-        final boolean[] checked = new boolean[n];
-        for (int i = 0; i < n; i++)
+        final Set<String> picked = new LinkedHashSet<>(appWhitelist);
+        final List<String[]> shown = new ArrayList<>(items);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+
+        EditText search = new EditText(this);
+        search.setHint("搜索应用名或包名");
+        search.setHintTextColor(0xFFB0B6C3);
+        search.setTextColor(COLOR_TEXT);
+        search.setTextSize(14);
+        search.setSingleLine(true);
+        search.setPadding(dp(12), dp(10), dp(12), dp(10));
+        search.setBackground(roundStrokeBg(Color.WHITE, dp(12), COLOR_LINE, 1));
+        box.addView(search, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        final TextView empty = new TextView(this);
+        empty.setText("没有匹配的应用");
+        empty.setTextColor(COLOR_SUB);
+        empty.setTextSize(13);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(0, dp(24), 0, dp(24));
+        empty.setVisibility(View.GONE);
+        box.addView(empty);
+
+        final ListView list = new ListView(this);
+        final BaseAdapter adapter = new BaseAdapter()
         {
-            String label = items.get(i)[0];
-            String pkg = items.get(i)[1];
-            labels[i] = label.equals(pkg) ? pkg : (label + "\n" + pkg);
-            pkgs[i] = pkg;
-            checked[i] = appWhitelist.contains(pkg);
-        }
+            @Override
+            public int getCount()
+            {
+                return shown.size();
+            }
+
+            @Override
+            public Object getItem(int position)
+            {
+                return shown.get(position);
+            }
+
+            @Override
+            public long getItemId(int position)
+            {
+                return position;
+            }
+
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent)
+            {
+                String[] item = shown.get(position);
+                return pickerRow(item[0], item[1], picked.contains(item[1]), convertView);
+            }
+        };
+        list.setAdapter(adapter);
+        list.setOnItemClickListener((parent, view, position, id) ->
+        {
+            String pkg = shown.get(position)[1];
+            if (!picked.remove(pkg))
+            {
+                picked.add(pkg);
+            }
+            adapter.notifyDataSetChanged();
+        });
+        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(380));
+        listLp.topMargin = dp(8);
+        box.addView(list, listLp);
+
+        search.addTextChangedListener(new TextWatcher()
+        {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable s)
+            {
+                String q = s.toString().trim().toLowerCase(Locale.ROOT);
+                shown.clear();
+                for (String[] item : items)
+                {
+                    if (q.isEmpty()
+                            || item[0].toLowerCase(Locale.ROOT).contains(q)
+                            || item[1].toLowerCase(Locale.ROOT).contains(q))
+                    {
+                        shown.add(item);
+                    }
+                }
+                adapter.notifyDataSetChanged();
+                empty.setVisibility(shown.isEmpty() ? View.VISIBLE : View.GONE);
+                list.setVisibility(shown.isEmpty() ? View.GONE : View.VISIBLE);
+            }
+        });
 
         new AlertDialog.Builder(this)
                 .setTitle("选择要放行的应用")
-                .setMultiChoiceItems(labels, checked, (d, which, isChecked) -> checked[which] = isChecked)
+                .setView(box)
                 .setPositiveButton("确定", (d, w) ->
                 {
                     appWhitelist.clear();
-                    for (int i = 0; i < n; i++)
-                    {
-                        if (checked[i])
-                        {
-                            appWhitelist.add(pkgs[i]);
-                        }
-                    }
+                    appWhitelist.addAll(picked);
                     boolean ok = persist();
                     renderAppList();
                     Toast.makeText(this,
@@ -240,6 +363,72 @@ public final class WhitelistActivity extends Activity
         for (String pkg : appWhitelist)
         {
             appListContainer.addView(appRow(pkg));
+        }
+    }
+
+    /** One row of the searchable picker: icon, label + package, and a tick. */
+    private View pickerRow(String label, String pkg, boolean checked, View convertView)
+    {
+        LinearLayout row;
+        if (convertView instanceof LinearLayout)
+        {
+            row = (LinearLayout) convertView;
+        }
+        else
+        {
+            row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(4), dp(10), dp(4), dp(10));
+
+            ImageView icon = new ImageView(this);
+            LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(36), dp(36));
+            iconLp.rightMargin = dp(12);
+            row.addView(icon, iconLp);
+
+            LinearLayout text = new LinearLayout(this);
+            text.setOrientation(LinearLayout.VERTICAL);
+            text.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            TextView name = new TextView(this);
+            name.setTextSize(14);
+            name.setTextColor(COLOR_TEXT);
+            text.addView(name);
+
+            TextView meta = new TextView(this);
+            meta.setTextSize(10);
+            meta.setTextColor(COLOR_SUB);
+            meta.setSingleLine(true);
+            meta.setEllipsize(TextUtils.TruncateAt.MIDDLE);
+            text.addView(meta);
+            row.addView(text);
+
+            CheckBox box = new CheckBox(this);
+            // The row itself handles the toggle; a focusable child would swallow it.
+            box.setClickable(false);
+            box.setFocusable(false);
+            row.addView(box);
+        }
+
+        ((ImageView) row.getChildAt(0)).setImageDrawable(appIcon(pkg));
+        LinearLayout text = (LinearLayout) row.getChildAt(1);
+        ((TextView) text.getChildAt(0)).setText(label);
+        ((TextView) text.getChildAt(1)).setText(pkg);
+        ((CheckBox) row.getChildAt(2)).setChecked(checked);
+        return row;
+    }
+
+    @SuppressWarnings("deprecation")
+    private android.graphics.drawable.Drawable appIcon(String pkg)
+    {
+        try
+        {
+            return getPackageManager().getApplicationIcon(pkg);
+        }
+        catch (Throwable t)
+        {
+            return getResources().getDrawable(android.R.drawable.sym_def_app_icon);
         }
     }
 

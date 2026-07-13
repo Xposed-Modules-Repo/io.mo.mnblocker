@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+        Edge-to-edge base theme. No system ActionBar (every screen draws its own
+        header), and both system bars are transparent so the light app background
+        shows through behind the status bar and the gesture pill. The insets are
+        re-applied as padding by SystemBars.
+    -->
+    <style name="AppTheme" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <!-- Same as the pages' COLOR_BG, so the bar areas blend into the content. -->
+        <item name="android:windowBackground">@color/app_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <!-- Light background => the clock and the gesture pill must be drawn dark. -->
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+</resources>

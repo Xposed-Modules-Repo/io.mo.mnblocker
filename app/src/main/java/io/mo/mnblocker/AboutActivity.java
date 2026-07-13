@@ -51,6 +51,7 @@ public final class AboutActivity extends Activity
         root.addView(sourceCard());
 
         setContentView(scroll);
+        SystemBars.edgeToEdge(this, scroll, root, root);
     }
 
     private View appInfoBlock()
