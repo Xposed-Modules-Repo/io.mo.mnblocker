@@ -148,7 +148,9 @@ final class RuleMatcher {
                     continue;
                 }
                 try {
-                    if (p.matcher(cand).matches() || p.matcher(cand).find()) {
+                    // find() subsumes matches(): a full match is also a match
+                    // somewhere, so testing both would run the engine twice.
+                    if (p.matcher(cand).find()) {
                         return p.pattern();
                     }
                 } catch (Throwable ignored) {

@@ -107,6 +107,9 @@ final class ContentStatsStore {
         if (normal != null) {
             return parse(normal);
         }
+        if (ShellUtils.missIsConclusive(FILE)) {
+            return parse(null); // nothing blocked yet — su would tell us the same
+        }
         return parse(ShellUtils.suReadFile(FILE));
     }
 

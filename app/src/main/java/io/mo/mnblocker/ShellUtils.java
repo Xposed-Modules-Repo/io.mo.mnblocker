@@ -68,6 +68,25 @@ final class ShellUtils {
     private static final String SAFE_MODE_FILE = "/data/system/mnblocker/safe_mode";
 
     /**
+     * Whether "we could not read {@code path}" is a conclusive answer rather than
+     * a permission problem: our uid can list the module directory, and the file
+     * genuinely is not in it.
+     *
+     * The su fallbacks in the *ForApp readers exist for strict SELinux ROMs that
+     * hide /data/system from a normal app uid. Without this check they also fired
+     * in the healthy case — a missing file (fresh install, nothing recorded yet)
+     * looks identical to a denied read — so every read spawned a ~100 ms–1 s su
+     * process on the main thread to rediscover that the file is absent.
+     */
+    static boolean missIsConclusive(String path) {
+        try {
+            return new File(HookLogger.DIR).canRead() && !new File(path).exists();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
      * Clear the safe-mode flag so hooks are reinstalled on the next boot.
      * The file lives in /data/system (owned by system, UID 1000), so the
      * settings UI process cannot delete it directly — it must go through su.
@@ -82,14 +101,23 @@ final class ShellUtils {
 
     /**
      * Whether the safe-mode flag is currently set. The settings app runs as a
-     * normal app uid and usually cannot stat /data/system directly (SELinux),
-     * so this falls back to su — the same way detected_channels.json and
-     * config.json are read. A direct check is tried first as a cheap fast path.
+     * normal app uid and on strict SELinux ROMs cannot stat /data/system
+     * directly, so this falls back to su — the same way detected_channels.json
+     * and config.json are read.
+     *
+     * The fallback only fires when the direct check is INCONCLUSIVE. Absent flag
+     * file is the healthy, overwhelmingly common case: treating that as "could
+     * not tell" and shelling out meant every call spawned su (~100 ms–1 s), on
+     * the main thread, for a file we had already correctly determined was not
+     * there. If the directory is readable, exists() is authoritative.
      */
     static boolean isSafeModeTripped() {
         try {
             if (new File(SAFE_MODE_FILE).exists()) {
                 return true;
+            }
+            if (missIsConclusive(SAFE_MODE_FILE)) {
+                return false; // readable dir + no flag file => genuinely not tripped
             }
             return runSu("test -f '" + SAFE_MODE_FILE + "'").exitCode == 0;
         } catch (Throwable t) {

@@ -91,11 +91,22 @@ final class DetectedChannelsStore {
         return parse(readNormal(FILE));
     }
 
-    /** App UI variant: direct read first; if SELinux denies it, fall back to su cat. */
+    /**
+     * App UI variant: direct read first; if SELinux denies it, fall back to su cat.
+     *
+     * "Read succeeded but there is nothing here" and "could not read" must stay
+     * distinguishable. Falling back on an empty LIST conflated the two, so a
+     * fresh install — where the hook has legitimately recorded no channels yet —
+     * spawned su on every call, on the main thread, only to be handed back the
+     * same empty list.
+     */
     static List<ChannelRecord> readAllFromDiskForApp() {
-        List<ChannelRecord> direct = parse(readNormal(FILE));
-        if (!direct.isEmpty()) {
-            return direct;
+        String normal = readNormal(FILE);
+        if (normal != null) {
+            return parse(normal);
+        }
+        if (ShellUtils.missIsConclusive(FILE)) {
+            return new ArrayList<>(); // directory visible, file absent => no data yet
         }
         return parse(ShellUtils.suReadFile(FILE));
     }

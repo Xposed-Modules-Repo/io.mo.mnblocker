@@ -39,6 +39,9 @@ final class ConfigFileStore {
         if (normal != null) {
             return parse(normal, lastModifiedForHook());
         }
+        if (ShellUtils.missIsConclusive(CONFIG_FILE)) {
+            return parse(null, -1L); // no config written yet — su would tell us the same
+        }
         String viaSu = ShellUtils.suReadFile(CONFIG_FILE);
         return parse(viaSu, lastModifiedForHook());
     }

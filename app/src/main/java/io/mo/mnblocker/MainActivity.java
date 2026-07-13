@@ -11,7 +11,9 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.text.format.DateUtils;
 import android.view.Gravity;
 import android.view.View;
@@ -52,6 +54,16 @@ public final class MainActivity extends Activity
     private static final int SORT_BY_APP = 0;
     private static final int SORT_BY_ALPHA = 1;
     private static final String KEY_UI_ONLY_MATCHED = "ui_only_matched";
+    private static final String KEY_UI_TAB = "ui_tab";
+
+    private static final int TAB_MAIN = 0;
+    private static final int TAB_STATS = 1;
+    private static final int TAB_MATCHED = 2;
+
+    /** Page crossfade timings and travel — see {@link Springs}. */
+    private static final long PAGE_IN_MS = 200;
+    private static final long PAGE_OUT_MS = 180;
+    private static final long TINT_MS = 180;
 
     private static final int COLOR_BG = 0xFFF6F7FB;
     private static final int COLOR_CARD = 0xFFFFFFFF;
@@ -80,15 +92,17 @@ public final class MainActivity extends Activity
     private Button multiSelectButton;
     private Button selectAllButton;
 
-    // Bottom-tab pages and controls.
+    // Bottom-tab pages and controls. Only pageMain is built up front; the other
+    // two are inflated the first time their tab is selected (see pageFor).
+    private FrameLayout contentFrame;
     private View pageMain;
     private View pageStats;
     private View pageMatched;
     private TextView[] tabViews;
     private ImageView[] tabIcons;
+    private int currentTab = -1;
     private LinearLayout statsTilesContainer;
     private LinearLayout rankingContainer;
-    private final Map<String, String> labelCache = new HashMap<>();
 
     // Whitelist state is edited on WhitelistActivity; the main screen holds
     // read-only copies (refreshed in onResume) so the matcher / list stay correct
@@ -98,6 +112,11 @@ public final class MainActivity extends Activity
 
     private final List<ChannelRecord> channels = new ArrayList<>();
     private final Map<String, Boolean> overrides = new HashMap<>();
+    // Row / header views survive a re-render: renderList() detaches them and
+    // re-attaches the same instances rather than inflating fresh trees. Bounded
+    // by DetectedChannelsStore.MAX_ENTRIES.
+    private final Map<String, LinearLayout> rowPool = new HashMap<>();
+    private final Map<String, View> headerPool = new HashMap<>();
     private final Set<String> selected = new LinkedHashSet<>();
     private int sortMode = SORT_BY_APP;
     private boolean multiSelectMode;
@@ -112,7 +131,11 @@ public final class MainActivity extends Activity
     // Shared block/allow engine, cached and rebuilt only when the rule text
     // changes so per-row rendering does not recompile regex repeatedly.
     private RuleMatcher cachedMatcher;
-    private String cachedMatcherKey;
+    private boolean matcherDirty = true;
+    /** Fingerprint of what the stats page last drew, so an unchanged visit is free. */
+    private String lastStatsSignature;
+    /** channel key -> regex verdict, memoised; cleared whenever the rules change. */
+    private final Map<String, Boolean> regexCache = new HashMap<>();
 
     @Override
     protected void attachBaseContext(Context newBase)
@@ -139,14 +162,12 @@ public final class MainActivity extends Activity
         outer.setOrientation(LinearLayout.VERTICAL);
         outer.setBackgroundColor(COLOR_BG);
 
-        FrameLayout contentFrame = new FrameLayout(this);
+        contentFrame = new FrameLayout(this);
 
+        // Only the landing page is built here — the stats and matched pages cost
+        // a full view tree each and most launches never open them.
         pageMain = buildMainPage();
-        pageStats = buildStatsPage();
-        pageMatched = buildMatchedPage();
         contentFrame.addView(pageMain, matchFrame());
-        contentFrame.addView(pageStats, matchFrame());
-        contentFrame.addView(pageMatched, matchFrame());
 
         View tabBar = buildTabBar();
         outer.addView(contentFrame, new LinearLayout.LayoutParams(
@@ -165,11 +186,31 @@ public final class MainActivity extends Activity
         // so the tab bar's card background is what fills the gesture-pill area.
         SystemBars.edgeToEdge(this, rootFrame, outer, tabBar);
 
-        showTab(0);
         loadSwitchesAndRules();
         reloadChannelsAndOverrides();
-        renderList();
-        refreshStats();
+
+        // Restore the tab last shown (rotation) without playing the transition.
+        // Done after the data loads, so a lazily-built page renders fully populated.
+        setTabImmediate(savedInstanceState == null
+                ? TAB_MAIN
+                : savedInstanceState.getInt(KEY_UI_TAB, TAB_MAIN));
+
+        // Build the other two pages once the first frame is on screen. Deferring
+        // their construction keeps the cold start cheap, but building one lazily
+        // on the tap that opens it put a whole view-tree inflation inside the
+        // transition's first frame — which is what made a quick tab tap stutter.
+        rootFrame.post(() ->
+        {
+            pageFor(TAB_STATS);
+            pageFor(TAB_MATCHED);
+        });
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle out)
+    {
+        super.onSaveInstanceState(out);
+        out.putInt(KEY_UI_TAB, currentTab);
     }
 
     private FrameLayout.LayoutParams matchFrame()
@@ -332,6 +373,8 @@ public final class MainActivity extends Activity
             tab.setGravity(Gravity.CENTER);
             tab.setPadding(dp(4), dp(8), dp(4), dp(6));
             tab.setOnClickListener(v -> showTab(idx));
+            // Draws only; returns false so the click listener above still fires.
+            tab.setOnTouchListener(Springs.pressFeedback(tab));
 
             ImageView icon = new ImageView(this);
             icon.setImageResource(icons[i]);
@@ -353,32 +396,189 @@ public final class MainActivity extends Activity
         return bar;
     }
 
+    /** The page for a tab, or {@code null} if it has not been built yet. */
+    private View builtPage(int i)
+    {
+        if (i == TAB_STATS)
+        {
+            return pageStats;
+        }
+        if (i == TAB_MATCHED)
+        {
+            return pageMatched;
+        }
+        return pageMain;
+    }
+
+    /**
+     * The page for a tab, building it on first use. A page built here is
+     * populated straight away: by the time any tab can be tapped, onCreate has
+     * already loaded the channel / override data it renders from.
+     */
+    private View pageFor(int i)
+    {
+        if (i == TAB_STATS && pageStats == null)
+        {
+            pageStats = buildStatsPage();
+            pageStats.setVisibility(View.GONE);
+            contentFrame.addView(pageStats, matchFrame());
+        }
+        else if (i == TAB_MATCHED && pageMatched == null)
+        {
+            pageMatched = buildMatchedPage();
+            pageMatched.setVisibility(View.GONE);
+            contentFrame.addView(pageMatched, matchFrame());
+            renderList();
+        }
+        return builtPage(i);
+    }
+
+    /** Select a tab with no transition — first layout and rotation restore. */
+    private void setTabImmediate(int i)
+    {
+        View to = pageFor(i);
+        settlePages(null, to);
+        to.setVisibility(View.VISIBLE);
+        to.setAlpha(1f);
+        to.setTranslationX(0f);
+
+        applyTabColors(i, false);
+        currentTab = i;
+        onTabSettled(i); // no transition to stay out of the way of
+    }
+
     private void showTab(int i)
     {
-        if (pageMain != null)
+        if (i == currentTab)
         {
-            pageMain.setVisibility(i == 0 ? View.VISIBLE : View.GONE);
+            popTabIcon(i); // re-tapping the active tab still acknowledges the touch
+            return;
         }
-        if (pageStats != null)
+
+        final View from = builtPage(currentTab);
+        View to = pageFor(i);
+
+        if (from == null || from == to)
         {
-            pageStats.setVisibility(i == 1 ? View.VISIBLE : View.GONE);
+            setTabImmediate(i);
+            popTabIcon(i);
+            return;
         }
-        if (pageMatched != null)
-        {
-            pageMatched.setVisibility(i == 2 ? View.VISIBLE : View.GONE);
-        }
-        if (tabViews != null)
-        {
-            for (int k = 0; k < tabViews.length; k++)
-            {
-                int c = k == i ? COLOR_PRIMARY : COLOR_SUB;
-                tabViews[k].setTextColor(c);
-                tabIcons[k].setColorFilter(c);
-            }
-        }
-        if (i == 1)
+
+        settlePages(from, to);
+
+        // Travel direction follows the tab order, so the pages feel laid out
+        // side by side rather than stacked.
+        int dx = dp(16) * (i > currentTab ? 1 : -1);
+
+        final int target = i;
+
+        // withLayer(): fading a whole ScrollView subtree without promoting it to a
+        // hardware layer re-renders every child each frame, which is most of what
+        // made rapid tab taps stutter.
+        to.setVisibility(View.VISIBLE);
+        to.setAlpha(0f);
+        to.setTranslationX(dx);
+        to.animate()
+                .alpha(1f)
+                .translationX(0f)
+                .setDuration(PAGE_IN_MS)
+                .setInterpolator(Springs.EASE_OUT)
+                .withLayer()
+                .withEndAction(() -> onTabSettled(target))
+                .start();
+
+        from.animate()
+                .alpha(0f)
+                .translationX(-dx)
+                .setDuration(PAGE_OUT_MS)
+                .setInterpolator(Springs.EASE_OUT)
+                .withLayer()
+                .withEndAction(() ->
+                {
+                    from.setVisibility(View.GONE);
+                    from.setAlpha(1f);
+                    from.setTranslationX(0f);
+                })
+                .start();
+
+        applyTabColors(i, true); // reads currentTab as the previous index
+        popTabIcon(i);
+        currentTab = i;
+    }
+
+    /**
+     * Work deferred until a tab transition has finished.
+     *
+     * Refreshing the stats page rebuilds its tiles and the whole app ranking. Doing
+     * that while the pages are still animating meant every tap paid for a view
+     * rebuild during the transition's own frames. If a transition is cancelled by
+     * another tap this never runs — but the tap that finally settles will run it.
+     */
+    private void onTabSettled(int i)
+    {
+        if (i == TAB_STATS)
         {
             refreshStats();
+        }
+    }
+
+    /**
+     * Cancel any in-flight page animation and settle every page that is neither
+     * leaving nor entering.
+     *
+     * withEndAction does NOT run when an animation is cancelled, so a page that
+     * gets interrupted mid-fade — which is exactly what rapid tab tapping does —
+     * would otherwise stay half-transparent and stuck on top of the new page.
+     */
+    private void settlePages(View from, View to)
+    {
+        for (int k = TAB_MAIN; k <= TAB_MATCHED; k++)
+        {
+            View p = builtPage(k);
+            if (p == null)
+            {
+                continue;
+            }
+            p.animate().cancel();
+            if (p != from && p != to)
+            {
+                p.setVisibility(View.GONE);
+                p.setAlpha(1f);
+                p.setTranslationX(0f);
+            }
+        }
+    }
+
+    private void popTabIcon(int i)
+    {
+        if (tabIcons != null && i >= 0 && i < tabIcons.length)
+        {
+            Springs.popIcon(tabIcons[i]);
+        }
+    }
+
+    /** Move the selected tint to tab {@code i}, crossfading when animating. */
+    private void applyTabColors(int i, boolean animate)
+    {
+        if (tabViews == null || tabIcons == null)
+        {
+            return;
+        }
+        for (int k = 0; k < tabViews.length; k++)
+        {
+            int to = (k == i) ? COLOR_PRIMARY : COLOR_SUB;
+            if (!animate)
+            {
+                tabIcons[k].setColorFilter(to);
+                tabViews[k].setTextColor(to);
+                continue;
+            }
+            int from = (k == currentTab) ? COLOR_PRIMARY : COLOR_SUB;
+            if (from != to)
+            {
+                Springs.tint(tabIcons[k], tabViews[k], from, to, TINT_MS);
+            }
         }
     }
 
@@ -516,6 +716,22 @@ public final class MainActivity extends Activity
         rulesInput.setHintTextColor(0xFFB0B6C3);
         rulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         rulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+        // matcher() no longer re-reads this field on every call, so the edits have
+        // to announce themselves.
+        rulesInput.addTextChangedListener(new TextWatcher()
+        {
+            @Override
+            public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int st, int b, int c) {}
+
+            @Override
+            public void afterTextChanged(Editable s)
+            {
+                invalidateMatcher();
+            }
+        });
 
         LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -577,6 +793,9 @@ public final class MainActivity extends Activity
 
         onlyMatchedSwitch = cleanSwitch(getString(R.string.switch_only_matched_title),
                 getString(R.string.switch_only_matched_sub));
+        // This page is built lazily, i.e. after loadSwitchesAndRules() has run, so
+        // it restores its own persisted state rather than being fed it from there.
+        onlyMatchedSwitch.setChecked(prefs().getBoolean(KEY_UI_ONLY_MATCHED, true));
         onlyMatchedSwitch.setOnCheckedChangeListener((b, v) ->
         {
             prefs().edit().putBoolean(KEY_UI_ONLY_MATCHED, v).apply();
@@ -683,33 +902,31 @@ public final class MainActivity extends Activity
         }
     }
 
+    /** The config bridge may need su, so the disk read is backgrounded. */
     private void loadSwitchesAndRules()
     {
         SharedPreferences sp = prefs();
-        boolean master = sp.getBoolean(RegexConfig.KEY_MASTER_ENABLED, true);
-        boolean matchDesc = sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
-        String rules = sp.getString(RegexConfig.KEY_RULES, "");
-        boolean contentEnabled = sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
-        String contentRules = sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
+        final boolean prefMaster = sp.getBoolean(RegexConfig.KEY_MASTER_ENABLED, true);
+        final boolean prefMatchDesc = sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
+        final String prefRules = sp.getString(RegexConfig.KEY_RULES, "");
+        final boolean prefContentOn = sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
+        final String prefContentRules = sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
 
-        ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
-        if (disk.hasValue)
+        Bg.load(this, ConfigFileStore::readForApp, disk ->
         {
-            master = disk.masterEnabled;
-            matchDesc = disk.matchDescription;
-            rules = disk.rules;
-            contentEnabled = disk.contentEnabled;
-            contentRules = disk.contentRules;
-        }
+            setCheckedSilently(masterSwitch,
+                    disk.hasValue ? disk.masterEnabled : prefMaster);
+            setCheckedSilently(matchDescSwitch,
+                    disk.hasValue ? disk.matchDescription : prefMatchDesc);
+            setCheckedSilently(contentEnabledSwitch,
+                    disk.hasValue ? disk.contentEnabled : prefContentOn);
+            rulesInput.setText(disk.hasValue ? disk.rules : prefRules);
+            contentRulesInput.setText(disk.hasValue ? disk.contentRules : prefContentRules);
 
-        setCheckedSilently(masterSwitch, master);
-        setCheckedSilently(matchDescSwitch, matchDesc);
-        setCheckedSilently(contentEnabledSwitch, contentEnabled);
-        setCheckedSilently(onlyMatchedSwitch, sp.getBoolean(KEY_UI_ONLY_MATCHED, true));
-        rulesInput.setText(rules);
-        contentRulesInput.setText(contentRules);
-        loadWhitelistState();
-        refreshStatus();
+            invalidateMatcher(); // rule text just changed
+            loadWhitelistState();
+            refreshStatus();
+        });
     }
 
     @Override
@@ -723,45 +940,54 @@ public final class MainActivity extends Activity
         refreshStats();
     }
 
-    /** Refresh the read-only whitelist copies the main screen relies on. */
+    /**
+     * Refresh the read-only whitelist copies the main screen relies on. The
+     * config bridge may only be readable via su, so the read is backgrounded and
+     * the list re-rendered once the values arrive.
+     */
     private void loadWhitelistState()
     {
         SharedPreferences sp = prefs();
-        String allow = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
-        String appList = sp.getString(RegexConfig.KEY_APP_WHITELIST, "");
+        final String prefAllow = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
+        final String prefApps = sp.getString(RegexConfig.KEY_APP_WHITELIST, "");
 
-        ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
-        if (disk.hasValue)
+        Bg.load(this, ConfigFileStore::readForApp, disk ->
         {
-            allow = disk.allowRules;
-            appList = disk.appWhitelist;
-        }
+            String allow = disk.hasValue ? disk.allowRules : prefAllow;
+            String appList = disk.hasValue ? disk.appWhitelist : prefApps;
 
-        allowRulesText = allow == null ? "" : allow;
-        appWhitelist.clear();
-        if (!TextUtils.isEmpty(appList))
-        {
-            for (String line : appList.split("\\r?\\n"))
+            allowRulesText = allow == null ? "" : allow;
+            appWhitelist.clear();
+            if (!TextUtils.isEmpty(appList))
             {
-                String t = line.trim();
-                if (!t.isEmpty())
+                for (String line : appList.split("\\r?\\n"))
                 {
-                    appWhitelist.add(t);
+                    String t = line.trim();
+                    if (!t.isEmpty())
+                    {
+                        appWhitelist.add(t);
+                    }
                 }
             }
-        }
-        cachedMatcherKey = null; // allow rules may have changed -> rebuild matcher
+            invalidateMatcher(); // allow rules may have changed
+            renderList();
+            refreshStats();
+        });
     }
 
     private void persistSwitches()
     {
+        // matchDescSwitch decides which fields candidates() tests, so any switch
+        // change invalidates the cached verdicts. (This is also the listener that
+        // setCheckedSilently reinstalls, so it must live here, not at the call site.)
+        invalidateMatcher();
         prefs().edit()
                 .putBoolean(RegexConfig.KEY_MASTER_ENABLED, masterSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_CONTENT_ENABLED,
                         contentEnabledSwitch != null && contentEnabledSwitch.isChecked())
                 .apply();
-        persistConfigFile(false);
+        persistConfigFile(false, null);
         refreshStatus();
     }
 
@@ -780,70 +1006,123 @@ public final class MainActivity extends Activity
             return;
         }
 
-        boolean ok = prefs().edit()
+        // apply(), not commit(): commit() writes the XML synchronously on the
+        // main thread. The bridge write below is the one that can actually fail
+        // (it needs root), so it alone decides the toast.
+        prefs().edit()
                 .putBoolean(RegexConfig.KEY_MASTER_ENABLED, masterSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_MATCH_DESC, matchDescSwitch.isChecked())
                 .putBoolean(RegexConfig.KEY_CONTENT_ENABLED, contentEnabledSwitch.isChecked())
                 .putString(RegexConfig.KEY_RULES, rules)
                 .putString(RegexConfig.KEY_CONTENT_RULES, contentRules)
-                .commit();
-        boolean bridgeOk = persistConfigFile(false);
+                .apply();
 
-        Toast.makeText(this,
-                ok && bridgeOk ? getString(R.string.toast_saved_synced) : getString(R.string.toast_saved_sync_failed),
-                Toast.LENGTH_LONG).show();
+        persistConfigFile(false, ok -> Toast.makeText(this,
+                ok ? getString(R.string.toast_saved_synced)
+                        : getString(R.string.toast_saved_sync_failed),
+                Toast.LENGTH_LONG).show());
+
         refreshStatus();
         renderList();
         refreshStats();
     }
 
+    /**
+     * Reload the detected channels, the per-channel overrides and the safe-mode
+     * flag. All three live under /data/system and may need su, so they are read
+     * together on one background pass and applied when they land.
+     */
     private void reloadChannelsAndOverrides()
     {
-        channels.clear();
-        channels.addAll(DetectedChannelsStore.readAllFromDiskForApp());
+        final String prefOverrides = prefs().getString(RegexConfig.KEY_OVERRIDES, "");
 
-        overrides.clear();
-        ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
-        String json = disk.hasValue
-                ? disk.overrides
-                : prefs().getString(RegexConfig.KEY_OVERRIDES, "");
-        if (!TextUtils.isEmpty(json))
+        Bg.load(this, () ->
         {
-            try
+            ChannelSnapshot s = new ChannelSnapshot();
+            s.channels = DetectedChannelsStore.readAllFromDiskForApp();
+            ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
+            s.overridesJson = disk.hasValue ? disk.overrides : prefOverrides;
+            s.safeMode = ShellUtils.isSafeModeTripped();
+            return s;
+        }, s ->
+        {
+            channels.clear();
+            channels.addAll(s.channels);
+            regexCache.clear(); // the records themselves may have changed
+
+            overrides.clear();
+            if (!TextUtils.isEmpty(s.overridesJson))
             {
-                JSONObject o = new JSONObject(json);
-                for (java.util.Iterator<String> it = o.keys(); it.hasNext(); )
+                try
                 {
-                    String k = it.next();
-                    overrides.put(k, o.optBoolean(k, false));
+                    JSONObject o = new JSONObject(s.overridesJson);
+                    for (java.util.Iterator<String> it = o.keys(); it.hasNext(); )
+                    {
+                        String k = it.next();
+                        overrides.put(k, o.optBoolean(k, false));
+                    }
+                }
+                catch (Throwable ignored)
+                {
                 }
             }
-            catch (Throwable ignored)
-            {
-            }
-        }
 
-        safeModeCached = ShellUtils.isSafeModeTripped();
-        selected.retainAll(keySet());
-        refreshStatus();
-        refreshStats();
+            safeModeCached = s.safeMode;
+            selected.retainAll(keySet());
+            refreshStatus();
+            renderList();
+            refreshStats();
+        });
     }
 
-    /** Rebuild the stats page: tiles + the combined per-app block ranking. */
+    /** What {@link #reloadChannelsAndOverrides} gathers off the main thread. */
+    private static final class ChannelSnapshot
+    {
+        List<ChannelRecord> channels;
+        String overridesJson;
+        boolean safeMode;
+    }
+
+    /**
+     * Rebuild the stats page: tiles + the combined per-app block ranking.
+     *
+     * The counters live under /data/system and may only be reachable via su, so
+     * they are fetched off the main thread — this runs on every visit to the
+     * stats tab, and a blocking read here would stall the tab transition.
+     */
     private void refreshStats()
     {
         if (statsTilesContainer == null || rankingContainer == null)
         {
             return;
         }
+        Bg.load(this, ContentStatsStore::readForApp, this::renderStats);
+    }
 
-        ContentStatsStore.Snapshot cs = ContentStatsStore.readForApp();
+    private void renderStats(ContentStatsStore.Snapshot cs)
+    {
+        if (statsTilesContainer == null || rankingContainer == null)
+        {
+            return;
+        }
+
         Map<String, Integer> blockedByApp = blockedChannelsByApp();
         int totalBlockedChannels = 0;
         for (int v : blockedByApp.values())
         {
             totalBlockedChannels += v;
         }
+
+        // Tearing down and rebuilding the tiles and the whole app ranking costs a
+        // dropped frame, and this runs on every visit to the tab — but the numbers
+        // usually have not moved since the last one. Rebuild only when they have.
+        String signature = cs.count + "|" + cs.lastBlocked + "|" + cs.perApp
+                + "|" + blockedByApp + "|" + rulesText();
+        if (signature.equals(lastStatsSignature))
+        {
+            return;
+        }
+        lastStatsSignature = signature;
         Set<String> apps = new LinkedHashSet<>(blockedByApp.keySet());
         apps.addAll(cs.perApp.keySet());
         int ruleCount = countRules(rulesInput == null ? "" : rulesInput.getText().toString()) + 1;
@@ -988,7 +1267,7 @@ public final class MainActivity extends Activity
         row.setLayoutParams(rowLp);
 
         ImageView iconView = new ImageView(this);
-        iconView.setImageDrawable(appIcon(pkg));
+        AppIconCache.bindIcon(this, iconView, pkg);
         row.addView(iconView, new LinearLayout.LayoutParams(dp(38), dp(38)));
 
         LinearLayout text = new LinearLayout(this);
@@ -1026,43 +1305,7 @@ public final class MainActivity extends Activity
 
     private String appLabel(String pkg)
     {
-        if (TextUtils.isEmpty(pkg))
-        {
-            return "<unknown>";
-        }
-        String cached = labelCache.get(pkg);
-        if (cached != null)
-        {
-            return cached;
-        }
-        String label = pkg;
-        try
-        {
-            android.content.pm.PackageManager pm = getPackageManager();
-            CharSequence l = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
-            if (l != null && l.length() > 0)
-            {
-                label = l.toString();
-            }
-        }
-        catch (Throwable ignored)
-        {
-        }
-        labelCache.put(pkg, label);
-        return label;
-    }
-
-    @SuppressWarnings("deprecation")
-    private android.graphics.drawable.Drawable appIcon(String pkg)
-    {
-        try
-        {
-            return getPackageManager().getApplicationIcon(pkg);
-        }
-        catch (Throwable t)
-        {
-            return getResources().getDrawable(android.R.drawable.sym_def_app_icon);
-        }
+        return AppIconCache.label(this, pkg);
     }
 
     private void onResetContentStats()
@@ -1099,26 +1342,45 @@ public final class MainActivity extends Activity
         {
         }
         prefs().edit().putString(RegexConfig.KEY_OVERRIDES, o.toString()).apply();
-        persistConfigFile(false);
+        persistConfigFile(false, null);
     }
 
-    private boolean persistConfigFile(boolean showToast)
+    /**
+     * Push the whole config to the root-writable JSON bridge.
+     *
+     * The write goes through su, so the UI state is snapshotted here on the main
+     * thread and the actual write happens on {@link Bg}. {@code then} (may be
+     * null) receives the outcome back on the main thread.
+     */
+    private void persistConfigFile(final boolean showToast, final Bg.Consumer<Boolean> then)
     {
-        boolean ok = ConfigFileStore.writeFromApp(
-                masterSwitch != null && masterSwitch.isChecked(),
-                matchDescSwitch == null || matchDescSwitch.isChecked(),
-                rulesInput == null ? "" : rulesInput.getText().toString(),
-                allowRulesText,
-                overridesJson(),
-                contentEnabledSwitch != null && contentEnabledSwitch.isChecked(),
-                contentRulesInput == null ? "" : contentRulesInput.getText().toString(),
-                TextUtils.join("\n", appWhitelist));
-        if (!ok && showToast)
-        {
-            Toast.makeText(this, getString(R.string.toast_config_sync_failed_fmt, ConfigFileStore.CONFIG_FILE),
-                    Toast.LENGTH_LONG).show();
-        }
-        return ok;
+        final boolean master = masterSwitch != null && masterSwitch.isChecked();
+        final boolean matchDesc = matchDescSwitch == null || matchDescSwitch.isChecked();
+        final String rules = rulesInput == null ? "" : rulesInput.getText().toString();
+        final String allow = allowRulesText;
+        final String ovr = overridesJson();
+        final boolean contentOn = contentEnabledSwitch != null && contentEnabledSwitch.isChecked();
+        final String contentRules = contentRulesInput == null
+                ? "" : contentRulesInput.getText().toString();
+        final String apps = TextUtils.join("\n", appWhitelist);
+
+        Bg.load(this,
+                () -> ConfigFileStore.writeFromApp(master, matchDesc, rules, allow, ovr,
+                        contentOn, contentRules, apps),
+                ok ->
+                {
+                    if (!ok && showToast)
+                    {
+                        Toast.makeText(this,
+                                getString(R.string.toast_config_sync_failed_fmt,
+                                        ConfigFileStore.CONFIG_FILE),
+                                Toast.LENGTH_LONG).show();
+                    }
+                    if (then != null)
+                    {
+                        then.accept(ok);
+                    }
+                });
     }
 
     private String overridesJson()
@@ -1139,6 +1401,13 @@ public final class MainActivity extends Activity
 
     private void renderList()
     {
+        // The matched page is built lazily; nothing to render until it exists.
+        // pageFor() calls this itself once the page is created.
+        if (listContainer == null)
+        {
+            return;
+        }
+
         sortButton.setText(sortMode == SORT_BY_APP
                 ? getString(R.string.sort_by_app) : getString(R.string.sort_by_alpha));
         multiSelectButton.setText(multiSelectMode
@@ -1157,6 +1426,10 @@ public final class MainActivity extends Activity
             batchHint.setText(getString(R.string.batch_hint_normal_fmt, visible.size()));
         }
 
+        // Detaches the children only — they stay alive in the pools below and are
+        // re-attached and rebound. renderList() runs on every toggle / sort /
+        // multi-select tap, and rebuilding up to 1000 row trees each time is what
+        // used to make those taps stutter.
         listContainer.removeAllViews();
 
         if (visible.isEmpty())
@@ -1187,10 +1460,36 @@ public final class MainActivity extends Activity
             if (sortMode == SORT_BY_APP && !r.pkg.equals(lastApp))
             {
                 lastApp = r.pkg;
-                listContainer.addView(appGroupHeader(r.pkg));
+                listContainer.addView(headerFor(r.pkg));
             }
-            listContainer.addView(channelRow(r));
+            listContainer.addView(rowFor(r));
         }
+    }
+
+    /** A group header for {@code pkg}, created once and reused across renders. */
+    private View headerFor(String pkg)
+    {
+        View v = headerPool.get(pkg);
+        if (v == null)
+        {
+            v = appGroupHeader(pkg);
+            headerPool.put(pkg, v);
+        }
+        return v;
+    }
+
+    /** The row for a channel, created once and rebound on every render. */
+    private View rowFor(ChannelRecord r)
+    {
+        String key = r.key();
+        LinearLayout row = rowPool.get(key);
+        if (row == null)
+        {
+            row = createChannelRow();
+            rowPool.put(key, row);
+        }
+        bindChannelRow(row, r);
+        return row;
     }
 
     private Comparator<ChannelRecord> comparator()
@@ -1234,7 +1533,7 @@ public final class MainActivity extends Activity
         row.setPadding(dp(2), dp(14), dp(2), dp(6));
 
         ImageView icon = new ImageView(this);
-        icon.setImageDrawable(appIcon(pkg));
+        AppIconCache.bindIcon(this, icon, pkg);
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(20), dp(20));
         iconLp.rightMargin = dp(8);
         row.addView(icon, iconLp);
@@ -1262,7 +1561,14 @@ public final class MainActivity extends Activity
         return row;
     }
 
-    private View channelRow(ChannelRecord r)
+    /**
+     * The channel-row skeleton, created once per channel and then rebound.
+     *
+     * The checkbox is always present and merely hidden outside multi-select mode:
+     * keeping the child indices stable is what lets a row survive a mode flip as
+     * a rebind instead of a rebuild.
+     */
+    private LinearLayout createChannelRow()
     {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -1276,91 +1582,77 @@ public final class MainActivity extends Activity
         rowLp.bottomMargin = dp(8);
         row.setLayoutParams(rowLp);
 
-        final String key = r.key();
-        final boolean blocked = effectiveBlocked(r);
-
-        if (multiSelectMode)
-        {
-            CheckBox cb = new CheckBox(this);
-            cb.setChecked(selected.contains(key));
-            cb.setOnCheckedChangeListener((b, checked) ->
-            {
-                if (checked)
-                {
-                    selected.add(key);
-                }
-                else
-                {
-                    selected.remove(key);
-                }
-                batchHint.setText(getString(R.string.batch_hint_multi_fmt, selected.size()));
-            });
-            row.addView(cb);
-        }
+        row.addView(new CheckBox(this)); // child 0
 
         LinearLayout text = new LinearLayout(this);
         text.setOrientation(LinearLayout.VERTICAL);
-        text.setPadding(multiSelectMode ? 0 : dp(2), 0, dp(8), 0);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-                0,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                1f);
-        text.setLayoutParams(tlp);
+        text.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         TextView nameView = new TextView(this);
-        nameView.setText(displayName(r));
         nameView.setTextSize(14);
         nameView.setTextColor(COLOR_TEXT);
         nameView.setTypeface(Typeface.DEFAULT_BOLD);
-        text.addView(nameView);
+        text.addView(nameView); // text 0
 
         TextView metaView = new TextView(this);
-        metaView.setText(r.pkg + "  ·  id=" + (TextUtils.isEmpty(r.id) ? "—" : r.id));
         metaView.setTextSize(10);
         metaView.setTextColor(COLOR_SUB);
         metaView.setSingleLine(true);
         metaView.setEllipsize(TextUtils.TruncateAt.END);
         metaView.setPadding(0, dp(3), 0, dp(3));
-        text.addView(metaView);
+        text.addView(metaView); // text 1
 
         TextView statusLine = new TextView(this);
-        Boolean ov = overrides.get(key);
-        String src;
-        if (ov != null)
+        statusLine.setTextSize(10);
+        statusLine.setTypeface(Typeface.DEFAULT_BOLD);
+        text.addView(statusLine); // text 2
+
+        row.addView(text);            // child 1
+        row.addView(new Switch(this)); // child 2
+        return row;
+    }
+
+    private void bindChannelRow(LinearLayout row, ChannelRecord r)
+    {
+        final String key = r.key();
+        final boolean blocked = effectiveBlocked(r);
+
+        CheckBox cb = (CheckBox) row.getChildAt(0);
+        LinearLayout text = (LinearLayout) row.getChildAt(1);
+        TextView nameView = (TextView) text.getChildAt(0);
+        TextView metaView = (TextView) text.getChildAt(1);
+        final TextView statusLine = (TextView) text.getChildAt(2);
+        Switch sw = (Switch) row.getChildAt(2);
+
+        // Detach the listener before setChecked — on a rebind the view still
+        // carries the previous channel's listener, and setting the state would
+        // otherwise fire it and write an override for the wrong channel.
+        cb.setOnCheckedChangeListener(null);
+        cb.setVisibility(multiSelectMode ? View.VISIBLE : View.GONE);
+        cb.setChecked(selected.contains(key));
+        cb.setOnCheckedChangeListener((b, checked) ->
         {
-            src = getString(R.string.source_override);
-        }
-        else if (appWhitelist.contains(r.pkg))
-        {
-            src = getString(R.string.source_app_whitelist);
-        }
-        else
-        {
-            RuleMatcher m = matcher();
-            String[] cand = candidates(r);
-            if (m.firstAllowMatch(cand) != null)
+            if (checked)
             {
-                src = getString(R.string.source_allow_whitelist);
-            }
-            else if (m.firstBlockMatch(cand) != null)
-            {
-                src = getString(R.string.source_regex_matched);
+                selected.add(key);
             }
             else
             {
-                src = getString(R.string.source_regex_not_matched);
+                selected.remove(key);
             }
-        }
-        statusLine.setText(getString(R.string.status_line_fmt, src,
+            batchHint.setText(getString(R.string.batch_hint_multi_fmt, selected.size()));
+        });
+
+        text.setPadding(multiSelectMode ? 0 : dp(2), 0, dp(8), 0);
+        nameView.setText(displayName(r));
+        metaView.setText(r.pkg + "  ·  id=" + (TextUtils.isEmpty(r.id) ? "—" : r.id));
+
+        statusLine.setText(getString(R.string.status_line_fmt, verdictSource(r),
                 getString(blocked ? R.string.status_blocked : R.string.status_allowed)));
-        statusLine.setTextSize(10);
         statusLine.setTextColor(blocked ? COLOR_DANGER : COLOR_SUCCESS);
-        statusLine.setTypeface(Typeface.DEFAULT_BOLD);
-        text.addView(statusLine);
 
-        row.addView(text);
-
-        Switch sw = new Switch(this);
+        sw.setOnCheckedChangeListener(null);
         sw.setChecked(blocked);
         sw.setOnCheckedChangeListener((CompoundButton b, boolean checked) ->
         {
@@ -1373,25 +1665,47 @@ public final class MainActivity extends Activity
             listHeader.setText(getString(R.string.list_header_fmt,
                     visible.size(), channels.size(), countBlocked(visible)));
         });
-        row.addView(sw);
 
         if (multiSelectMode)
         {
             row.setOnClickListener(v ->
             {
-                if (selected.contains(key))
-                {
-                    selected.remove(key);
-                }
-                else
+                if (!selected.remove(key))
                 {
                     selected.add(key);
                 }
                 renderList();
             });
         }
+        else
+        {
+            row.setOnClickListener(null);
+            row.setClickable(false);
+        }
+    }
 
-        return row;
+    /** Which rule decided this channel's verdict — shown on the row's status line. */
+    private String verdictSource(ChannelRecord r)
+    {
+        if (overrides.get(r.key()) != null)
+        {
+            return getString(R.string.source_override);
+        }
+        if (appWhitelist.contains(r.pkg))
+        {
+            return getString(R.string.source_app_whitelist);
+        }
+        RuleMatcher m = matcher();
+        String[] cand = candidates(r);
+        if (m.firstAllowMatch(cand) != null)
+        {
+            return getString(R.string.source_allow_whitelist);
+        }
+        if (m.firstBlockMatch(cand) != null)
+        {
+            return getString(R.string.source_regex_matched);
+        }
+        return getString(R.string.source_regex_not_matched);
     }
 
     private void batchSet(boolean block)
@@ -1498,23 +1812,57 @@ public final class MainActivity extends Activity
      * UI never disagrees with what actually gets blocked. Reflects the allow
      * whitelist (allow beats block) and the "匹配描述文本" toggle.
      */
+    /**
+     * Whether the regex rules match this channel, memoised per channel.
+     *
+     * Callers run this over the whole channel list — the stats page does it for
+     * every record on every visit — so without the cache a single tab switch
+     * could execute the rule set a thousand times mid-animation.
+     */
     private boolean uiRegexMatched(ChannelRecord r)
     {
-        return matcher().shouldBlock(candidates(r));
+        String key = r.key();
+        Boolean cached = regexCache.get(key);
+        if (cached != null)
+        {
+            return cached;
+        }
+        boolean matched = matcher().shouldBlock(candidates(r));
+        regexCache.put(key, matched);
+        return matched;
     }
 
-    /** Shared engine built from the current rule text; cached until text changes. */
+    /**
+     * Shared engine built from the current rule text.
+     *
+     * Rebuilt only when something actually invalidates it. It used to re-read the
+     * EditText and rebuild a cache key string on EVERY call — i.e. once per
+     * channel per render — which is exactly the work this is supposed to avoid.
+     */
     private RuleMatcher matcher()
     {
-        String block = rulesInput == null ? "" : rulesInput.getText().toString();
-        String allow = allowRulesText == null ? "" : allowRulesText;
-        String key = block + " " + allow;
-        if (!key.equals(cachedMatcherKey))
+        if (cachedMatcher == null || matcherDirty)
         {
+            String block = rulesInput == null ? "" : rulesInput.getText().toString();
+            String allow = allowRulesText == null ? "" : allowRulesText;
             cachedMatcher = RuleMatcher.compile(splitLines(block), splitLines(allow));
-            cachedMatcherKey = key;
+            matcherDirty = false;
+            regexCache.clear();
         }
         return cachedMatcher;
+    }
+
+    /** Rule text / match-description / allow list changed: verdicts must be recomputed. */
+    private void invalidateMatcher()
+    {
+        matcherDirty = true;
+        regexCache.clear();
+        lastStatsSignature = null; // the rule count and the verdicts both feed the stats
+    }
+
+    private String rulesText()
+    {
+        return rulesInput == null ? "" : rulesInput.getText().toString();
     }
 
     /** Candidate strings to test: id + name, plus description when the toggle is on. */
@@ -1795,6 +2143,12 @@ public final class MainActivity extends Activity
 
     private void setCheckedSilently(Switch sw, boolean checked)
     {
+        // Switches on the stats / matched pages do not exist until their tab is
+        // first opened; those pages read their own state when they are built.
+        if (sw == null)
+        {
+            return;
+        }
         sw.setOnCheckedChangeListener(null);
         sw.setChecked(checked);
         if (sw == onlyMatchedSwitch)

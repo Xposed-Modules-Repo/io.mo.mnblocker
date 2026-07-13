@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -59,6 +61,9 @@ public final class WhitelistActivity extends Activity
     private static final int COLOR_LINE = 0xFFE7EAF0;
     private static final int COLOR_PRIMARY = 0xFF3F6DF6;
     private static final int COLOR_DANGER = 0xFFC62828;
+
+    /** Quiet period after the last keystroke before the app list is re-filtered. */
+    private static final long SEARCH_DEBOUNCE_MS = 150;
 
     private EditText allowInput;
     private LinearLayout appListContainer;
@@ -165,9 +170,10 @@ public final class WhitelistActivity extends Activity
             Toast.makeText(this, getString(R.string.toast_regex_invalid_fmt, bad), Toast.LENGTH_LONG).show();
             return;
         }
-        boolean ok = persist();
-        Toast.makeText(this, ok ? getString(R.string.toast_saved_synced) : getString(R.string.toast_allow_save_partial),
-                Toast.LENGTH_LONG).show();
+        persist(ok -> Toast.makeText(this,
+                ok ? getString(R.string.toast_saved_synced)
+                        : getString(R.string.toast_allow_save_partial),
+                Toast.LENGTH_LONG).show());
     }
 
     // ------------------------------------------------------------------
@@ -200,7 +206,9 @@ public final class WhitelistActivity extends Activity
         {
             final PackageManager pm = getPackageManager();
             List<ApplicationInfo> installed = pm.getInstalledApplications(0);
-            final List<String[]> items = new ArrayList<>(); // {label, pkg}
+            // {label, pkg, label-lowercased, pkg-lowercased}. The lowercase forms
+            // are folded once here rather than per keystroke in the search filter.
+            final List<String[]> items = new ArrayList<>();
             for (ApplicationInfo ai : installed)
             {
                 String label;
@@ -213,7 +221,9 @@ public final class WhitelistActivity extends Activity
                 {
                     label = ai.packageName;
                 }
-                items.add(new String[]{label, ai.packageName});
+                items.add(new String[]{label, ai.packageName,
+                        label.toLowerCase(Locale.ROOT),
+                        ai.packageName.toLowerCase(Locale.ROOT)});
             }
             Collections.sort(items, new Comparator<String[]>()
             {
@@ -306,8 +316,31 @@ public final class WhitelistActivity extends Activity
         listLp.topMargin = dp(8);
         box.addView(list, listLp);
 
+        // Debounced: a rescan re-binds every visible row, so running one per
+        // keystroke made typing lag on devices with a few hundred apps installed.
+        final Handler handler = new Handler(Looper.getMainLooper());
         search.addTextChangedListener(new TextWatcher()
         {
+            private final Runnable filter = new Runnable()
+            {
+                @Override
+                public void run()
+                {
+                    String q = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+                    shown.clear();
+                    for (String[] item : items)
+                    {
+                        if (q.isEmpty() || item[2].contains(q) || item[3].contains(q))
+                        {
+                            shown.add(item);
+                        }
+                    }
+                    adapter.notifyDataSetChanged();
+                    empty.setVisibility(shown.isEmpty() ? View.VISIBLE : View.GONE);
+                    list.setVisibility(shown.isEmpty() ? View.GONE : View.VISIBLE);
+                }
+            };
+
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
@@ -317,20 +350,8 @@ public final class WhitelistActivity extends Activity
             @Override
             public void afterTextChanged(Editable s)
             {
-                String q = s.toString().trim().toLowerCase(Locale.ROOT);
-                shown.clear();
-                for (String[] item : items)
-                {
-                    if (q.isEmpty()
-                            || item[0].toLowerCase(Locale.ROOT).contains(q)
-                            || item[1].toLowerCase(Locale.ROOT).contains(q))
-                    {
-                        shown.add(item);
-                    }
-                }
-                adapter.notifyDataSetChanged();
-                empty.setVisibility(shown.isEmpty() ? View.VISIBLE : View.GONE);
-                list.setVisibility(shown.isEmpty() ? View.GONE : View.VISIBLE);
+                handler.removeCallbacks(filter);
+                handler.postDelayed(filter, SEARCH_DEBOUNCE_MS);
             }
         });
 
@@ -341,12 +362,11 @@ public final class WhitelistActivity extends Activity
                 {
                     appWhitelist.clear();
                     appWhitelist.addAll(picked);
-                    boolean ok = persist();
-                    renderAppList();
-                    Toast.makeText(this,
+                    renderAppList(); // optimistic — the save reports back below
+                    persist(ok -> Toast.makeText(this,
                             ok ? getString(R.string.toast_app_whitelist_saved_fmt, appWhitelist.size())
                                     : getString(R.string.toast_app_whitelist_save_failed),
-                            Toast.LENGTH_SHORT).show();
+                            Toast.LENGTH_SHORT).show());
                 })
                 .setNegativeButton(getString(R.string.action_cancel), null)
                 .show();
@@ -418,25 +438,12 @@ public final class WhitelistActivity extends Activity
             row.addView(box);
         }
 
-        ((ImageView) row.getChildAt(0)).setImageDrawable(appIcon(pkg));
+        AppIconCache.bindIcon(this, (ImageView) row.getChildAt(0), pkg);
         LinearLayout text = (LinearLayout) row.getChildAt(1);
         ((TextView) text.getChildAt(0)).setText(label);
         ((TextView) text.getChildAt(1)).setText(pkg);
         ((CheckBox) row.getChildAt(2)).setChecked(checked);
         return row;
-    }
-
-    @SuppressWarnings("deprecation")
-    private android.graphics.drawable.Drawable appIcon(String pkg)
-    {
-        try
-        {
-            return getPackageManager().getApplicationIcon(pkg);
-        }
-        catch (Throwable t)
-        {
-            return getResources().getDrawable(android.R.drawable.sym_def_app_icon);
-        }
     }
 
     private View appRow(final String pkg)
@@ -485,8 +492,8 @@ public final class WhitelistActivity extends Activity
         remove.setOnClickListener(v ->
         {
             appWhitelist.remove(pkg);
-            persist();
             renderAppList();
+            persist(null);
         });
         row.addView(remove, new LinearLayout.LayoutParams(dp(64), dp(40)));
         return row;
@@ -513,61 +520,78 @@ public final class WhitelistActivity extends Activity
     // Persistence (preserves the fields owned by the main screen)
     // ------------------------------------------------------------------
 
+    /** Config lives under /data/system and may need su, so read it off the main thread. */
     private void loadCurrent()
     {
         SharedPreferences sp = prefs();
-        String allow = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
-        String appList = sp.getString(RegexConfig.KEY_APP_WHITELIST, "");
+        final String prefAllow = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
+        final String prefApps = sp.getString(RegexConfig.KEY_APP_WHITELIST, "");
 
-        ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
-        if (disk.hasValue)
+        Bg.load(this, ConfigFileStore::readForApp, disk ->
         {
-            allow = disk.allowRules;
-            appList = disk.appWhitelist;
-        }
+            String allow = disk.hasValue ? disk.allowRules : prefAllow;
+            String appList = disk.hasValue ? disk.appWhitelist : prefApps;
 
-        allowInput.setText(allow);
-        appWhitelist.clear();
-        if (!TextUtils.isEmpty(appList))
-        {
-            for (String line : appList.split("\\r?\\n"))
+            allowInput.setText(allow);
+            appWhitelist.clear();
+            if (!TextUtils.isEmpty(appList))
             {
-                String t = line.trim();
-                if (!t.isEmpty())
+                for (String line : appList.split("\\r?\\n"))
                 {
-                    appWhitelist.add(t);
+                    String t = line.trim();
+                    if (!t.isEmpty())
+                    {
+                        appWhitelist.add(t);
+                    }
                 }
             }
-        }
-        renderAppList();
+            renderAppList();
+        });
     }
 
-    private boolean persist()
+    /**
+     * Save the allow rules + app whitelist to the config bridge.
+     *
+     * This is a read-modify-write — the main screen owns the other keys in the
+     * file and they must survive — and BOTH halves go through su. The whole
+     * cycle therefore runs on {@link Bg}; {@code then} (may be null) gets the
+     * outcome back on the main thread.
+     */
+    private void persist(final Bg.Consumer<Boolean> then)
     {
-        String allow = allowInput.getText().toString();
-        String appList = TextUtils.join("\n", appWhitelist);
+        final String allow = allowInput.getText().toString();
+        final String appList = TextUtils.join("\n", appWhitelist);
 
-        SharedPreferences sp = prefs();
+        final SharedPreferences sp = prefs();
         sp.edit()
                 .putString(RegexConfig.KEY_ALLOW_RULES, allow)
                 .putString(RegexConfig.KEY_APP_WHITELIST, appList)
                 .apply();
 
-        // Preserve everything the main screen owns.
-        ConfigFileStore.ConfigSnapshot cur = ConfigFileStore.readForApp();
-        boolean master = cur.hasValue ? cur.masterEnabled
-                : sp.getBoolean(RegexConfig.KEY_MASTER_ENABLED, true);
-        boolean matchDesc = cur.hasValue ? cur.matchDescription
-                : sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
-        String rules = cur.hasValue ? cur.rules : sp.getString(RegexConfig.KEY_RULES, "");
-        String overrides = cur.hasValue ? cur.overrides : sp.getString(RegexConfig.KEY_OVERRIDES, "");
-        boolean contentEnabled = cur.hasValue ? cur.contentEnabled
-                : sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
-        String contentRules = cur.hasValue ? cur.contentRules
-                : sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
+        Bg.load(this, () ->
+        {
+            ConfigFileStore.ConfigSnapshot cur = ConfigFileStore.readForApp();
+            boolean master = cur.hasValue ? cur.masterEnabled
+                    : sp.getBoolean(RegexConfig.KEY_MASTER_ENABLED, true);
+            boolean matchDesc = cur.hasValue ? cur.matchDescription
+                    : sp.getBoolean(RegexConfig.KEY_MATCH_DESC, true);
+            String rules = cur.hasValue ? cur.rules : sp.getString(RegexConfig.KEY_RULES, "");
+            String overrides = cur.hasValue ? cur.overrides
+                    : sp.getString(RegexConfig.KEY_OVERRIDES, "");
+            boolean contentEnabled = cur.hasValue ? cur.contentEnabled
+                    : sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
+            String contentRules = cur.hasValue ? cur.contentRules
+                    : sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
 
-        return ConfigFileStore.writeFromApp(master, matchDesc, rules, allow, overrides,
-                contentEnabled, contentRules, appList);
+            return ConfigFileStore.writeFromApp(master, matchDesc, rules, allow, overrides,
+                    contentEnabled, contentRules, appList);
+        }, ok ->
+        {
+            if (then != null)
+            {
+                then.accept(ok);
+            }
+        });
     }
 
     @SuppressWarnings("deprecation")
