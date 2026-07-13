@@ -1,0 +1,57 @@
+name: Sync release to Xposed-Modules-Repo
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  mirror-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history and tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Push release tag to mirror
+        env:
+          MIRROR_PUSH_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git remote add mirror "https://x-access-token:${MIRROR_PUSH_TOKEN}@github.com/Xposed-Modules-Repo/io.mo.mnblocker.git"
+          git push mirror "refs/tags/${RELEASE_TAG}" --force
+
+      - name: Download release assets from source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir -p release-assets
+          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --dir release-assets --clobber || true
+
+      - name: Create release on mirror
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_NAME: ${{ github.event.release.name }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          PRERELEASE_FLAG=""
+          if [ "${RELEASE_PRERELEASE}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          ASSET_ARGS=()
+          if [ -n "$(ls -A release-assets 2>/dev/null)" ]; then
+            ASSET_ARGS=(release-assets/*)
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --repo Xposed-Modules-Repo/io.mo.mnblocker \
+            --title "${RELEASE_NAME}" \
+            --notes "${RELEASE_BODY}" \
+            ${PRERELEASE_FLAG} \
+            "${ASSET_ARGS[@]}"
