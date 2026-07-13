@@ -1,0 +1,29 @@
+name: Sync mirror to Xposed-Modules-Repo
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  group: mirror-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history and tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Force push main and tags to mirror
+        env:
+          MIRROR_PUSH_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
+        run: |
+          git remote add mirror "https://x-access-token:${MIRROR_PUSH_TOKEN}@github.com/Xposed-Modules-Repo/io.mo.mnblocker.git"
+          git push mirror HEAD:refs/heads/main --force
+          git push mirror --tags --force
