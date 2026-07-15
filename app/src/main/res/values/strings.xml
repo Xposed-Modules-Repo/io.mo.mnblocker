@@ -119,6 +119,14 @@
     <string name="stats_empty">暂无拦截记录。产生拦截后，这里按应用汇总排行。</string>
     <string name="ranking_meta_fmt">通道 %1$d · 内容 %2$d  ·  %3$s</string>
 
+    <!-- ===== BlockedNotificationsActivity（应用被拦截通知详情） ===== -->
+    <string name="blocked_notifications_subtitle">内容级拦截明细</string>
+    <string name="blocked_loading">正在读取拦截记录…</string>
+    <string name="blocked_empty">该应用暂无内容级拦截记录。</string>
+    <string name="blocked_count_fmt">共 %1$d 条（最多保留最近 100 条）</string>
+    <string name="blocked_rule_fmt">命中规则：%1$s</string>
+    <string name="blocked_no_text">（该通知无标题与正文）</string>
+
     <string name="confirm_reset_stats_title">清空内容拦截计数</string>
     <string name="confirm_reset_stats_msg">将内容级拦截的累计次数与应用排行清零？此操作不影响你的规则与开关。</string>
     <string name="action_clear">清空</string>

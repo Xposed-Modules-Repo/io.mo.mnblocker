@@ -51,6 +51,10 @@
         <activity
             android:name=".WhitelistActivity"
             android:exported="false" />
+
+        <activity
+            android:name=".BlockedNotificationsActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

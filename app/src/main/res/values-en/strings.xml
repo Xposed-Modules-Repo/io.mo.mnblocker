@@ -114,6 +114,14 @@ Content-level blocking: %6$s · Content rules: %7$d]]></string>
     <string name="stats_empty">No blocks yet. Once blocks happen, they will be ranked here by app.</string>
     <string name="ranking_meta_fmt">Channel %1$d · Content %2$d  ·  %3$s</string>
 
+    <!-- ===== BlockedNotificationsActivity ===== -->
+    <string name="blocked_notifications_subtitle">Content-level block details</string>
+    <string name="blocked_loading">Loading block history…</string>
+    <string name="blocked_empty">No content-level blocks for this app yet.\n(Channel-level blocking only mutes a channel; it does not record individual blocked notifications.)</string>
+    <string name="blocked_count_fmt">%1$d records (most recent 100 kept)</string>
+    <string name="blocked_rule_fmt">Matched rule: %1$s</string>
+    <string name="blocked_no_text">(This notification had no title or text)</string>
+
     <string name="confirm_reset_stats_title">Clear Content Block Count</string>
     <string name="confirm_reset_stats_msg">Reset the content-block count and per-app ranking to zero? This does not affect your rules or switches.</string>
     <string name="action_clear">Clear</string>

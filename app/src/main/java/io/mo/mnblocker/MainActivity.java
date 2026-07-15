@@ -1300,6 +1300,25 @@ public final class MainActivity extends Activity
         total.setTypeface(Typeface.DEFAULT_BOLD);
         total.setTextColor(COLOR_DANGER);
         row.addView(total);
+
+        // Tap the row to see this app's dropped content notifications in detail.
+        TextView chevron = new TextView(this);
+        chevron.setText("›");
+        chevron.setTextSize(22);
+        chevron.setTextColor(COLOR_SUB);
+        chevron.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams chLp = new LinearLayout.LayoutParams(dp(20), dp(38));
+        chLp.leftMargin = dp(4);
+        row.addView(chevron, chLp);
+
+        final String tapPkg = pkg;
+        row.setClickable(true);
+        row.setOnClickListener(v ->
+        {
+            Intent it = new Intent(this, BlockedNotificationsActivity.class);
+            it.putExtra(BlockedNotificationsActivity.EXTRA_PKG, tapPkg);
+            startActivity(it);
+        });
         return row;
     }
 
@@ -1316,6 +1335,8 @@ public final class MainActivity extends Activity
                 .setPositiveButton(getString(R.string.action_clear), (d, w) -> new Thread(() ->
                 {
                     boolean ok = ContentStatsStore.resetFromApp();
+                    // Keep the per-app detail log consistent with the zeroed count.
+                    ContentBlockLogStore.resetFromApp();
                     runOnUiThread(() ->
                     {
                         Toast.makeText(this,

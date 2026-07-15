@@ -52,10 +52,14 @@ final class ShellUtils {
     static boolean fixDirPermissions() {
         try {
             String dir = "/data/system/mnblocker";
+            // content_block_log.json holds notification text and must stay
+            // owner-only (0600); re-lock it AFTER the blanket 0666 above so this
+            // startup repair cannot silently widen it to world-readable.
             String cmd = "mkdir -p '" + dir + "'"
                     + " && chown -R 1000:1000 '" + dir + "'"
                     + " && chmod 0771 '" + dir + "'"
                     + " && chmod 0666 '" + dir + "'/* 2>/dev/null"
+                    + "; chmod 0600 '" + dir + "/content_block_log.json' 2>/dev/null"
                     + "; chcon -R u:object_r:system_data_file:s0 '" + dir + "' 2>/dev/null"
                     + "; true";
             ShellResult r = runSu(cmd);

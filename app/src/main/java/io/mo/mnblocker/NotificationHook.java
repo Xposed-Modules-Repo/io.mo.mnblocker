@@ -58,6 +58,8 @@ final class NotificationHook {
     private final OriginalChannelStateStore originalStateStore = new OriginalChannelStateStore();
     /** Cumulative counter for content-level blocks, surfaced to the settings UI. */
     private final ContentStatsStore contentStats = new ContentStatsStore();
+    /** Per-app detail of the notifications content blocking dropped (private file). */
+    private final ContentBlockLogStore blockLog = new ContentBlockLogStore();
 
     NotificationHook(SafetyManager safety) {
         this.safety = safety;
@@ -737,6 +739,11 @@ final class NotificationHook {
                 param.setResult(null);
                 String pkg = describeCaller(param.args);
                 contentStats.recordBlock(pkg);
+                blockLog.record(pkg, extractField(n, Notification.EXTRA_TITLE),
+                        firstNonEmpty(new String[]{
+                                extractField(n, Notification.EXTRA_TEXT),
+                                extractField(n, Notification.EXTRA_BIG_TEXT)}),
+                        blockRule);
                 HookLogger.i("BLOCKED notification (content)"
                         + " | caller=" + pkg
                         + " | title=" + HookLogger.safe(firstNonEmpty(candidates))
@@ -795,6 +802,22 @@ final class NotificationHook {
             if (s != null && !s.isEmpty()) {
                 return s;
             }
+        }
+        return null;
+    }
+
+    /** Read one extras field as a String; null-safe on odd ROMs. */
+    private static String extractField(Notification n, String key) {
+        try {
+            Bundle b = n.extras;
+            if (b != null) {
+                CharSequence cs = b.getCharSequence(key);
+                if (cs != null) {
+                    return cs.toString();
+                }
+            }
+        } catch (Throwable ignored) {
+            // extras access can throw on some ROMs; treat as absent.
         }
         return null;
     }
