@@ -55,12 +55,31 @@ final class RootFreeChannelStore {
             }
             loadedFromDisk = true;
         }
+        // This runs on the listener's main thread for EVERY posted notification,
+        // and the vast majority are repeat posts from a channel we already have at
+        // the same importance/name/verdict — only the lastSeen timestamp would
+        // move. Skip those: the UI reads the persisted file, never this in-memory
+        // map, so an unflushed timestamp bump is invisible anyway, and a full
+        // JSONArray rewrite (up to MAX_ENTRIES rows) per notification is exactly
+        // the main-thread I/O CLAUDE.md warns against.
+        ChannelRecord prev = live.get(r.key());
+        if (prev != null && sameSubstance(prev, r)) {
+            return;
+        }
         live.remove(r.key());
         live.put(r.key(), r);
         while (live.size() > MAX_ENTRIES) {
             live.remove(live.keySet().iterator().next());
         }
         flush();
+    }
+
+    /** True when two records differ only in {@code lastSeen} (fields are non-null). */
+    private static boolean sameSubstance(ChannelRecord a, ChannelRecord b) {
+        return a.importance == b.importance
+                && a.regexMatched == b.regexMatched
+                && a.name.equals(b.name)
+                && a.desc.equals(b.desc);
     }
 
     private void flush() {

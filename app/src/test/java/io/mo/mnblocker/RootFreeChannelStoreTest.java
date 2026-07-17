@@ -45,6 +45,21 @@ public final class RootFreeChannelStoreTest {
     }
 
     @Test
+    public void repeatPostWithoutSubstantiveChangeDoesNotRewrite() {
+        File f = file();
+        RootFreeChannelStore store = new RootFreeChannelStore(f);
+        store.record(new ChannelRecord("pkg.a", "ch1", "促销", "d", 3, true, 100L));
+        // Same channel, same importance/name/desc/verdict — only the timestamp
+        // moved. The full-array rewrite is skipped, so the persisted lastSeen must
+        // still be the original 100L, not 200L.
+        store.record(new ChannelRecord("pkg.a", "ch1", "促销", "d", 3, true, 200L));
+
+        List<ChannelRecord> all = RootFreeChannelStore.readAll(f);
+        assertEquals(1, all.size());
+        assertEquals(100L, all.get(0).lastSeen);
+    }
+
+    @Test
     public void survivesReloadAcrossInstances() {
         File f = file();
         new RootFreeChannelStore(f).record(new ChannelRecord("pkg.a", "ch1", "n", "", 3, false, 1L));

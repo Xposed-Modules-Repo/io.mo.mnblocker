@@ -60,6 +60,12 @@ public final class RootFreeNotificationListener extends NotificationListenerServ
     @Override
     public void onListenerConnected() {
         super.onListenerConnected();
+        // The system can disconnect then reconnect without destroying the service;
+        // drop the previous config's pref-change listener before making a new one.
+        RootFreeConfig old = config;
+        if (old != null) {
+            old.close();
+        }
         config = new RootFreeConfig(this);
         channelStore = new RootFreeChannelStore(this);
         statsStore = new RootFreeStatsStore(this);
@@ -87,26 +93,17 @@ public final class RootFreeNotificationListener extends NotificationListenerServ
     public void onNotificationPosted(StatusBarNotification sbn, RankingMap rankingMap) {
         try {
             RootFreeConfig cfg = config;
-            if (cfg == null || !cfg.isRootFreeMode() || !cfg.isMasterEnabled()) {
+            if (cfg == null || !cfg.isRootFreeMode()) {
                 return;
             }
 
             String pkg = sbn.getPackageName();
             if (getPackageName().equals(pkg)) {
-                return; // never touch our own notifications
-            }
-            if (cfg.isAppWhitelisted(pkg)) {
-                return;
+                return; // never touch — or even record — our own notifications
             }
 
             Notification n = sbn.getNotification();
             if (n == null) {
-                return;
-            }
-            // NEVER suppress a foreground-service notification: the platform
-            // requires it and killing it can crash the owning service. Mirrors
-            // NotificationHook's enqueueCallback rule.
-            if (sbn.isOngoing() || (n.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
                 return;
             }
 
@@ -118,7 +115,26 @@ public final class RootFreeNotificationListener extends NotificationListenerServ
                 }
             }
 
+            // Observe the channel for the settings UI list BEFORE any gate below.
+            // Master-off, the app whitelist and foreground-service suppress the
+            // ACTION, not the observation — mirrors NotificationHook, which records
+            // the channel before checking master/whitelist so the list stays
+            // complete. (Recording after those gates froze the list while the
+            // master switch was off, and hid every channel of a whitelisted app.)
             recordObserved(cfg, pkg, channel);
+
+            if (!cfg.isMasterEnabled()) {
+                return;
+            }
+            if (cfg.isAppWhitelisted(pkg)) {
+                return;
+            }
+            // NEVER suppress a foreground-service notification: the platform
+            // requires it and killing it can crash the owning service. Mirrors
+            // NotificationHook's enqueueCallback rule.
+            if (sbn.isOngoing() || (n.flags & Notification.FLAG_FOREGROUND_SERVICE) != 0) {
+                return;
+            }
 
             // ---- channel-level judgment ----
             BlockDecision.Result d = BlockDecision.decide(
@@ -127,6 +143,7 @@ public final class RootFreeNotificationListener extends NotificationListenerServ
                     false, // whole-app whitelist already handled by the early return above
                     channelCandidates(channel, cfg.isMatchDescription()));
 
+            boolean contentBlock = false;
             // ---- content-level judgment (only if channel-level missed and enabled) ----
             // The channel override deliberately does NOT carry over here, and passing
             // it in is a mistake that looks like a fix. It answers "blanket-block this
@@ -143,6 +160,7 @@ public final class RootFreeNotificationListener extends NotificationListenerServ
                 if (candidates.length > 0) {
                     d = BlockDecision.decide(cfg.contentMatcher(), null, false, candidates);
                     if (d.block) {
+                        contentBlock = true;
                         // Only content-level blocks leave a per-notification detail
                         // entry — channel-level blocking never intercepts an
                         // individual post. Mirrors ContentBlockLogStore's semantics.
@@ -157,7 +175,12 @@ public final class RootFreeNotificationListener extends NotificationListenerServ
 
             if (d.block) {
                 cancelNotification(sbn.getKey());
-                if (statsStore != null) {
+                // Stats mirror ContentStatsStore: count ONLY content-level drops so
+                // the "内容级累计拦截" tile and its per-app detail log stay in
+                // agreement. A channel-level block silences the channel; it does not
+                // drop an individual post, so counting it here would inflate the
+                // content total with events that have no matching detail entry.
+                if (contentBlock && statsStore != null) {
                     statsStore.recordBlock(pkg);
                 }
             }
