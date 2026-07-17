@@ -82,8 +82,31 @@ public final class MainActivity extends Activity
     private EditText contentRulesInput;
     private Switch masterSwitch;
     private Switch matchDescSwitch;
-    private TextView statusView;
+    /**
+     * The status readout in the hero card: a state line plus a 2x3 grid of
+     * counters. Held as pieces rather than one formatted TextView because the
+     * whole point is that the numbers line up in columns — a single string can
+     * only fake that with separators.
+     */
+    private LinearLayout statusBox;
+    private View statusDot;
+    private View statusDivider;
+    private TextView statusState;
+    private TextView[] statusValues;
+    private TextView[] statusLabels;
     private Button clearSafeModeButton;
+    // Root-free mode: mode switch + its permission-prompt row + the standing
+    // capability-limitation notice (see docs/rootfree-mode-plan.md §8).
+    private Button grantAccessButton;
+    /** Bounds the listener rebind attempt to one per resume; see refreshStatus(). */
+    private boolean rebindNudged;
+    /**
+     * Mode as of the last render. The picker lives in AboutActivity now, so a
+     * change can land while this screen is merely stopped — and the mode decides
+     * which stores the channel list and stats are read from, which a plain
+     * refresh would not re-route. Compared on resume.
+     */
+    private String lastKnownMode;
     private TextView listHeader;
     private TextView batchHint;
     private Switch onlyMatchedSwitch;
@@ -124,6 +147,13 @@ public final class MainActivity extends Activity
     // directly), so it is cached here and refreshed on load / manual refresh
     // rather than probed on every refreshStatus() call.
     private boolean safeModeCached;
+    /**
+     * Whether a hook is actually live in system_server, read alongside safe mode
+     * on the same background pass (both live under /data/system and may need su).
+     * Null until the first load lands, and in root-free mode, where there is no
+     * hook — refreshStatus() treats null as "nothing to claim yet".
+     */
+    private HookAliveStore.State hookStateCached;
 
     private final Collator zhCollator = Collator.getInstance(Locale.CHINA);
     private FrameLayout rootFrame;
@@ -148,13 +178,26 @@ public final class MainActivity extends Activity
     {
         super.onCreate(savedInstanceState);
 
-        // Repair dir ownership + check root in one background thread.
-        new Thread(() -> {
-            boolean hasRoot = ShellUtils.fixDirPermissions();
-            if (!hasRoot) {
-                runOnUiThread(() -> showFadeHint(getString(R.string.main_no_root_hint)));
-            }
-        }).start();
+        if (!prefs().contains(RegexConfig.KEY_OPERATING_MODE))
+        {
+            startActivity(new Intent(this, SetupModeActivity.class));
+            finish();
+            return;
+        }
+
+        if (!rootFree())
+        {
+            // Repair dir ownership + check root in one background thread.
+            // Root-free mode never touches /data/system, so this su spawn (and
+            // its "Root not granted" hint, which would be flatly wrong for a
+            // root-free user) is skipped entirely.
+            new Thread(() -> {
+                boolean hasRoot = ShellUtils.fixDirPermissions();
+                if (!hasRoot) {
+                    runOnUiThread(() -> showFadeHint(getString(R.string.main_no_root_hint)));
+                }
+            }).start();
+        }
 
         rootFrame = new FrameLayout(this);
 
@@ -629,17 +672,11 @@ public final class MainActivity extends Activity
         desc.setLineSpacing(dp(2), 1.0f);
         card.addView(desc);
 
-        statusView = new TextView(this);
-        statusView.setTextSize(12);
-        statusView.setTextColor(Color.WHITE);
-        statusView.setPadding(dp(12), dp(10), dp(12), dp(10));
-        statusView.setBackground(roundBg(0x22FFFFFF, dp(14)));
-
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(14);
-        card.addView(statusView, lp);
+        card.addView(statusBox(), lp);
 
         clearSafeModeButton = baseButton(getString(R.string.safe_mode_close_button));
         clearSafeModeButton.setTextColor(Color.WHITE);
@@ -699,6 +736,17 @@ public final class MainActivity extends Activity
         matchDescSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
         card.addView(matchDescSwitch);
 
+        // The mode picker itself lives in AboutActivity — it is a one-off setup
+        // choice, not a daily toggle. Only the grant button stays here, because
+        // it is operational: it pairs with the status banner above and is what
+        // the user needs when root-free mode is on but access is missing.
+        grantAccessButton = softButton(getString(R.string.rootfree_grant_access_button));
+        grantAccessButton.setOnClickListener(v -> NotificationAccessUtils.openListenerSettings(this));
+        LinearLayout.LayoutParams grantLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
+        grantLp.topMargin = dp(8);
+        card.addView(grantAccessButton, grantLp);
+
         return card;
     }
 
@@ -750,7 +798,10 @@ public final class MainActivity extends Activity
         card.addView(contentTitle);
 
         TextView contentDesc = new TextView(this);
-        contentDesc.setText(getString(R.string.content_section_desc));
+        // Root-free needs no reboot to load a hook — it has none.
+        contentDesc.setText(getString(rootFree()
+                ? R.string.content_section_desc_rootfree
+                : R.string.content_section_desc));
         contentDesc.setTextColor(COLOR_SUB);
         contentDesc.setTextSize(12);
         contentDesc.setPadding(0, 0, 0, dp(2));
@@ -792,7 +843,9 @@ public final class MainActivity extends Activity
         card.addView(listHeader);
 
         onlyMatchedSwitch = cleanSwitch(getString(R.string.switch_only_matched_title),
-                getString(R.string.switch_only_matched_sub));
+                getString(rootFree()
+                        ? R.string.switch_only_matched_sub_rootfree
+                        : R.string.switch_only_matched_sub));
         // This page is built lazily, i.e. after loadSwitchesAndRules() has run, so
         // it restores its own persisted state rather than being fed it from there.
         onlyMatchedSwitch.setChecked(prefs().getBoolean(KEY_UI_ONLY_MATCHED, true));
@@ -865,6 +918,13 @@ public final class MainActivity extends Activity
         toolbar2.addView(selectAllButton, equalWeightWithGap(false));
         card.addView(toolbar2);
 
+        LinearLayout toolbar3 = rowLayout();
+        toolbar3.setPadding(0, dp(8), 0, 0);
+        Button resetDefault = softButton(getString(R.string.action_reset_default));
+        resetDefault.setOnClickListener(v -> batchClearOverrides());
+        toolbar3.addView(resetDefault, equalWeightWithGap(false));
+        card.addView(toolbar3);
+
         batchHint = new TextView(this);
         batchHint.setTextSize(12);
         batchHint.setTextColor(COLOR_SUB);
@@ -902,7 +962,23 @@ public final class MainActivity extends Activity
         }
     }
 
-    /** The config bridge may need su, so the disk read is backgrounded. */
+    /**
+     * Whether the root-free (NotificationListenerService) path is active.
+     * A pure pref read — never spawns su — so it is safe to call from onCreate
+     * and any UI thread code path without background dispatch.
+     */
+    private boolean rootFree()
+    {
+        return RegexConfig.MODE_ROOTFREE.equals(
+                prefs().getString(RegexConfig.KEY_OPERATING_MODE, RegexConfig.MODE_ROOT));
+    }
+
+    /**
+     * The config bridge may need su, so the disk read is backgrounded — except
+     * in root-free mode, where mnblocker_prefs IS the source of truth and a
+     * disk read would only spend 100ms+ on an su spawn to confirm what the
+     * pref already says (see docs/rootfree-mode-plan.md §2.4, §8).
+     */
     private void loadSwitchesAndRules()
     {
         SharedPreferences sp = prefs();
@@ -911,6 +987,20 @@ public final class MainActivity extends Activity
         final String prefRules = sp.getString(RegexConfig.KEY_RULES, "");
         final boolean prefContentOn = sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
         final String prefContentRules = sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
+
+        if (rootFree())
+        {
+            setCheckedSilently(masterSwitch, prefMaster);
+            setCheckedSilently(matchDescSwitch, prefMatchDesc);
+            setCheckedSilently(contentEnabledSwitch, prefContentOn);
+            rulesInput.setText(prefRules);
+            contentRulesInput.setText(prefContentRules);
+
+            invalidateMatcher(); // rule text just changed
+            loadWhitelistState();
+            refreshStatus();
+            return;
+        }
 
         Bg.load(this, ConfigFileStore::readForApp, disk ->
         {
@@ -933,17 +1023,32 @@ public final class MainActivity extends Activity
     protected void onResume()
     {
         super.onResume();
+        rebindNudged = false;
         // The whitelist screen may have changed allow rules / app whitelist.
         loadWhitelistState();
+
+        // The About screen may have switched modes, which re-points the channel
+        // list and stats at the other mode's stores entirely.
+        String mode = prefs().getString(RegexConfig.KEY_OPERATING_MODE, RegexConfig.MODE_ROOT);
+        if (lastKnownMode != null && !lastKnownMode.equals(mode))
+        {
+            loadSwitchesAndRules();
+            reloadChannelsAndOverrides();
+        }
+        lastKnownMode = mode;
+
         refreshStatus();
         renderList();
         refreshStats();
     }
 
     /**
-     * Refresh the read-only whitelist copies the main screen relies on. The
-     * config bridge may only be readable via su, so the read is backgrounded and
-     * the list re-rendered once the values arrive.
+     * Refresh the read-only whitelist copies the main screen relies on.
+     *
+     * Root mode: the config bridge may only be readable via su, so the read is
+     * backgrounded and the list re-rendered once the values arrive.
+     * Root-free mode: mnblocker_prefs is already the source of truth (same
+     * uid as the listener), so this applies synchronously — no su, no wait.
      */
     private void loadWhitelistState()
     {
@@ -951,28 +1056,36 @@ public final class MainActivity extends Activity
         final String prefAllow = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
         final String prefApps = sp.getString(RegexConfig.KEY_APP_WHITELIST, "");
 
-        Bg.load(this, ConfigFileStore::readForApp, disk ->
+        if (rootFree())
         {
-            String allow = disk.hasValue ? disk.allowRules : prefAllow;
-            String appList = disk.hasValue ? disk.appWhitelist : prefApps;
+            applyWhitelistState(prefAllow, prefApps);
+            return;
+        }
 
-            allowRulesText = allow == null ? "" : allow;
-            appWhitelist.clear();
-            if (!TextUtils.isEmpty(appList))
+        Bg.load(this, ConfigFileStore::readForApp, disk ->
+                applyWhitelistState(
+                        disk.hasValue ? disk.allowRules : prefAllow,
+                        disk.hasValue ? disk.appWhitelist : prefApps));
+    }
+
+    private void applyWhitelistState(String allow, String appList)
+    {
+        allowRulesText = allow == null ? "" : allow;
+        appWhitelist.clear();
+        if (!TextUtils.isEmpty(appList))
+        {
+            for (String line : appList.split("\\r?\\n"))
             {
-                for (String line : appList.split("\\r?\\n"))
+                String t = line.trim();
+                if (!t.isEmpty())
                 {
-                    String t = line.trim();
-                    if (!t.isEmpty())
-                    {
-                        appWhitelist.add(t);
-                    }
+                    appWhitelist.add(t);
                 }
             }
-            invalidateMatcher(); // allow rules may have changed
-            renderList();
-            refreshStats();
-        });
+        }
+        invalidateMatcher(); // allow rules may have changed
+        renderList();
+        refreshStats();
     }
 
     private void persistSwitches()
@@ -987,7 +1100,10 @@ public final class MainActivity extends Activity
                 .putBoolean(RegexConfig.KEY_CONTENT_ENABLED,
                         contentEnabledSwitch != null && contentEnabledSwitch.isChecked())
                 .apply();
-        persistConfigFile(false, null);
+        if (!rootFree())
+        {
+            persistConfigFile(false, null);
+        }
         refreshStatus();
     }
 
@@ -1017,10 +1133,20 @@ public final class MainActivity extends Activity
                 .putString(RegexConfig.KEY_CONTENT_RULES, contentRules)
                 .apply();
 
-        persistConfigFile(false, ok -> Toast.makeText(this,
-                ok ? getString(R.string.toast_saved_synced)
-                        : getString(R.string.toast_saved_sync_failed),
-                Toast.LENGTH_LONG).show());
+        if (rootFree())
+        {
+            // The listener reads mnblocker_prefs directly (same uid, no su
+            // bridge), so there is no hook to sync to and nothing that can fail
+            // — hence plain success, and NOT the root path's "synced to Hook".
+            Toast.makeText(this, getString(R.string.toast_saved_rootfree), Toast.LENGTH_LONG).show();
+        }
+        else
+        {
+            persistConfigFile(false, ok -> Toast.makeText(this,
+                    ok ? getString(R.string.toast_saved_synced)
+                            : getString(R.string.toast_saved_sync_failed),
+                    Toast.LENGTH_LONG).show());
+        }
 
         refreshStatus();
         renderList();
@@ -1029,20 +1155,39 @@ public final class MainActivity extends Activity
 
     /**
      * Reload the detected channels, the per-channel overrides and the safe-mode
-     * flag. All three live under /data/system and may need su, so they are read
-     * together on one background pass and applied when they land.
+     * flag.
+     *
+     * Root mode: all three live under /data/system and may need su, so they
+     * are read together on one background pass and applied when they land.
+     * Root-free mode: channels come from the app-private RootFreeChannelStore,
+     * overrides from mnblocker_prefs directly, and safe mode (a root-hook-only
+     * concept — see SafetyManager) is always false. Still dispatched through
+     * Bg for a uniform code path, even though none of this needs su.
      */
     private void reloadChannelsAndOverrides()
     {
         final String prefOverrides = prefs().getString(RegexConfig.KEY_OVERRIDES, "");
+        final boolean rf = rootFree();
 
         Bg.load(this, () ->
         {
             ChannelSnapshot s = new ChannelSnapshot();
-            s.channels = DetectedChannelsStore.readAllFromDiskForApp();
-            ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
-            s.overridesJson = disk.hasValue ? disk.overrides : prefOverrides;
-            s.safeMode = ShellUtils.isSafeModeTripped();
+            if (rf)
+            {
+                s.channels = RootFreeChannelStore.readAll(MainActivity.this);
+                s.overridesJson = prefOverrides;
+                s.safeMode = false;
+                // No hook to be alive in this mode; the listener reports itself.
+                s.hookState = null;
+            }
+            else
+            {
+                s.channels = DetectedChannelsStore.readAllFromDiskForApp();
+                ConfigFileStore.ConfigSnapshot disk = ConfigFileStore.readForApp();
+                s.overridesJson = disk.hasValue ? disk.overrides : prefOverrides;
+                s.safeMode = ShellUtils.isSafeModeTripped();
+                s.hookState = HookAliveStore.readForApp();
+            }
             return s;
         }, s ->
         {
@@ -1068,6 +1213,7 @@ public final class MainActivity extends Activity
             }
 
             safeModeCached = s.safeMode;
+            hookStateCached = s.hookState;
             selected.retainAll(keySet());
             refreshStatus();
             renderList();
@@ -1081,6 +1227,7 @@ public final class MainActivity extends Activity
         List<ChannelRecord> channels;
         String overridesJson;
         boolean safeMode;
+        HookAliveStore.State hookState;
     }
 
     /**
@@ -1096,7 +1243,14 @@ public final class MainActivity extends Activity
         {
             return;
         }
-        Bg.load(this, ContentStatsStore::readForApp, this::renderStats);
+        if (rootFree())
+        {
+            Bg.load(this, () -> RootFreeStatsStore.readFromDisk(this), this::renderStats);
+        }
+        else
+        {
+            Bg.load(this, ContentStatsStore::readForApp, this::renderStats);
+        }
     }
 
     private void renderStats(ContentStatsStore.Snapshot cs)
@@ -1334,13 +1488,24 @@ public final class MainActivity extends Activity
                 .setMessage(getString(R.string.confirm_reset_stats_msg))
                 .setPositiveButton(getString(R.string.action_clear), (d, w) -> new Thread(() ->
                 {
-                    boolean ok = ContentStatsStore.resetFromApp();
-                    // Keep the per-app detail log consistent with the zeroed count.
-                    ContentBlockLogStore.resetFromApp();
+                    boolean ok;
+                    if (rootFree())
+                    {
+                        ok = RootFreeStatsStore.reset(this);
+                        // Keep the per-app detail log consistent with the zeroed count.
+                        RootFreeBlockLogStore.reset(this);
+                    }
+                    else
+                    {
+                        ok = ContentStatsStore.resetFromApp();
+                        // Keep the per-app detail log consistent with the zeroed count.
+                        ContentBlockLogStore.resetFromApp();
+                    }
+                    final boolean okF = ok;
                     runOnUiThread(() ->
                     {
                         Toast.makeText(this,
-                                ok ? getString(R.string.toast_cleared) : getString(R.string.toast_clear_failed),
+                                okF ? getString(R.string.toast_cleared) : getString(R.string.toast_clear_failed),
                                 Toast.LENGTH_SHORT).show();
                         refreshStats();
                     });
@@ -1363,7 +1528,10 @@ public final class MainActivity extends Activity
         {
         }
         prefs().edit().putString(RegexConfig.KEY_OVERRIDES, o.toString()).apply();
-        persistConfigFile(false, null);
+        if (!rootFree())
+        {
+            persistConfigFile(false, null);
+        }
     }
 
     /**
@@ -1384,10 +1552,11 @@ public final class MainActivity extends Activity
         final String contentRules = contentRulesInput == null
                 ? "" : contentRulesInput.getText().toString();
         final String apps = TextUtils.join("\n", appWhitelist);
+        final String mode = prefs().getString(RegexConfig.KEY_OPERATING_MODE, RegexConfig.MODE_ROOT);
 
         Bg.load(this,
                 () -> ConfigFileStore.writeFromApp(master, matchDesc, rules, allow, ovr,
-                        contentOn, contentRules, apps),
+                        contentOn, contentRules, apps, mode),
                 ok ->
                 {
                     if (!ok && showToast)
@@ -1456,9 +1625,21 @@ public final class MainActivity extends Activity
         if (visible.isEmpty())
         {
             TextView empty = new TextView(this);
-            empty.setText(channels.isEmpty()
-                    ? getString(R.string.empty_no_data)
-                    : getString(R.string.empty_no_regex_match));
+            // The root-mode text tells the user to check root read access — advice
+            // that makes no sense in root-free mode, where the store is this app's
+            // own private file and a sparse list is expected rather than a fault.
+            int emptyText;
+            if (!channels.isEmpty())
+            {
+                emptyText = R.string.empty_no_regex_match;
+            }
+            else
+            {
+                emptyText = rootFree()
+                        ? R.string.empty_no_data_rootfree
+                        : R.string.empty_no_data;
+            }
+            empty.setText(getString(emptyText));
             empty.setTextSize(12);
             empty.setTextColor(COLOR_SUB);
             empty.setGravity(Gravity.CENTER);
@@ -1729,26 +1910,37 @@ public final class MainActivity extends Activity
         return getString(R.string.source_regex_not_matched);
     }
 
-    private void batchSet(boolean block)
+    /**
+     * Which channels a batch action applies to: the ticked ones in multi-select
+     * mode, otherwise everything currently listed.
+     *
+     * @return null when there is nothing to act on — a toast has been shown.
+     */
+    private Set<String> batchTargets()
     {
-        Set<String> targets;
         if (multiSelectMode)
         {
             if (selected.isEmpty())
             {
                 Toast.makeText(this, getString(R.string.toast_select_first), Toast.LENGTH_SHORT).show();
-                return;
+                return null;
             }
-            targets = new LinkedHashSet<>(selected);
+            return new LinkedHashSet<>(selected);
         }
-        else
+        Set<String> visible = visibleKeySet();
+        if (visible.isEmpty())
         {
-            targets = visibleKeySet();
-            if (targets.isEmpty())
-            {
-                Toast.makeText(this, getString(R.string.toast_list_empty), Toast.LENGTH_SHORT).show();
-                return;
-            }
+            Toast.makeText(this, getString(R.string.toast_list_empty), Toast.LENGTH_SHORT).show();
+        }
+        return visible.isEmpty() ? null : visible;
+    }
+
+    private void batchSet(boolean block)
+    {
+        Set<String> targets = batchTargets();
+        if (targets == null)
+        {
+            return;
         }
 
         for (String k : targets)
@@ -1761,6 +1953,46 @@ public final class MainActivity extends Activity
         Toast.makeText(this,
                 getString(block ? R.string.toast_blocked_n_fmt : R.string.toast_allowed_n_fmt, targets.size()),
                 Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * Drop the per-channel override so the channel goes back to following the
+     * regex rules. Setting a row's switch used to be one-way: the UI could only
+     * put true/false and never remove, so "no override, just follow the rules"
+     * was unreachable once a channel had been touched.
+     *
+     * Mode-agnostic on purpose — overrides live in one pref that both engines
+     * read, and persistOverrides() already handles pushing to the root bridge.
+     * In root mode a channel that was forced silent gets its original importance
+     * back the next time the hook sees it (OriginalChannelStateStore), so no
+     * reboot is needed here either.
+     */
+    private void batchClearOverrides()
+    {
+        Set<String> targets = batchTargets();
+        if (targets == null)
+        {
+            return;
+        }
+
+        int cleared = 0;
+        for (String k : targets)
+        {
+            if (overrides.remove(k) != null)
+            {
+                cleared++;
+            }
+        }
+
+        if (cleared == 0)
+        {
+            Toast.makeText(this, getString(R.string.toast_no_override), Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        persistOverrides();
+        renderList();
+        Toast.makeText(this, getString(R.string.toast_reset_n_fmt, cleared), Toast.LENGTH_SHORT).show();
     }
 
     private boolean effectiveBlocked(ChannelRecord r)
@@ -1965,18 +2197,153 @@ public final class MainActivity extends Activity
         return getString(R.string.unknown_name);
     }
 
+    /**
+     * Builds the status readout. Labels are fixed at build time; only the values,
+     * the state line and the palette change on refresh.
+     */
+    private View statusBox()
+    {
+        statusBox = new LinearLayout(this);
+        statusBox.setOrientation(LinearLayout.VERTICAL);
+        statusBox.setPadding(dp(14), dp(12), dp(14), dp(13));
+
+        LinearLayout stateRow = new LinearLayout(this);
+        stateRow.setOrientation(LinearLayout.HORIZONTAL);
+        stateRow.setGravity(Gravity.CENTER_VERTICAL);
+
+        statusDot = new View(this);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
+        dotLp.rightMargin = dp(8);
+        stateRow.addView(statusDot, dotLp);
+
+        statusState = new TextView(this);
+        statusState.setTextSize(14);
+        statusState.setTypeface(Typeface.DEFAULT_BOLD);
+        stateRow.addView(statusState, wrapParams());
+        statusBox.addView(stateRow);
+
+        statusDivider = new View(this);
+        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1) / 2));
+        divLp.topMargin = dp(11);
+        divLp.bottomMargin = dp(12);
+        statusBox.addView(statusDivider, divLp);
+
+        statusValues = new TextView[6];
+        statusLabels = new TextView[6];
+        statusBox.addView(statusGridRow(0,
+                R.string.status_label_rules,
+                R.string.status_label_allow,
+                R.string.status_label_apps));
+
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(12);
+        statusBox.addView(statusGridRow(3,
+                R.string.status_label_overrides,
+                R.string.status_label_content_rules,
+                R.string.status_label_content), rowLp);
+
+        return statusBox;
+    }
+
+    private View statusGridRow(int start, int labelA, int labelB, int labelC)
+    {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(statusCell(start, labelA));
+        row.addView(statusCell(start + 1, labelB));
+        row.addView(statusCell(start + 2, labelC));
+        return row;
+    }
+
+    /** One counter: value over label, an equal-width column of the grid. */
+    private View statusCell(int index, int labelRes)
+    {
+        LinearLayout cell = new LinearLayout(this);
+        cell.setOrientation(LinearLayout.VERTICAL);
+
+        TextView value = new TextView(this);
+        value.setTextSize(17);
+        value.setTypeface(Typeface.DEFAULT_BOLD);
+        cell.addView(value);
+        statusValues[index] = value;
+
+        TextView label = new TextView(this);
+        label.setText(getString(labelRes));
+        label.setTextSize(10);
+        label.setPadding(0, dp(2), 0, 0);
+        cell.addView(label);
+        statusLabels[index] = label;
+
+        cell.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return cell;
+    }
+
     private void refreshStatus()
     {
-        if (statusView == null)
+        if (statusBox == null)
         {
             return;
         }
 
-        boolean safeMode = safeModeCached;
-        String state = safeMode
-                ? getString(R.string.state_safe_mode)
-                : (masterSwitch != null && masterSwitch.isChecked()
-                        ? getString(R.string.state_running) : getString(R.string.state_master_off));
+        boolean rf = rootFree();
+        // Safe mode is a root-hook-only concept (SystemUI crash-loop
+        // protection via SafetyManager) — never meaningful in root-free mode.
+        boolean safeMode = !rf && safeModeCached;
+        boolean listenerGranted = rf && NotificationAccessUtils.isListenerAccessGranted(this);
+        // Granted != bound: replacing the APK drops the binding but keeps the
+        // grant, so reporting on the grant alone claimed "running" while nothing
+        // was being intercepted.
+        boolean listenerConnected = listenerGranted && RootFreeNotificationListener.isConnected();
+        if (listenerGranted && !listenerConnected && !rebindNudged)
+        {
+            // One nudge per resume: rebinding is async, so re-check once rather
+            // than spin here every time the status is refreshed.
+            rebindNudged = true;
+            NotificationAccessUtils.requestRebind(this);
+            statusBox.postDelayed(this::refreshStatus, 1500);
+        }
+
+        String state;
+        if (safeMode)
+        {
+            state = getString(R.string.state_safe_mode);
+        }
+        else if (masterSwitch != null && !masterSwitch.isChecked())
+        {
+            state = getString(R.string.state_master_off);
+        }
+        else if (rf)
+        {
+            if (!listenerGranted)
+            {
+                state = getString(R.string.state_rootfree_not_granted);
+            }
+            else
+            {
+                state = listenerConnected
+                        ? getString(R.string.state_rootfree_connected)
+                        : getString(R.string.state_rootfree_reconnecting);
+            }
+        }
+        else if (hookStateCached == HookAliveStore.State.NOT_LOADED)
+        {
+            state = getString(R.string.state_hook_not_loaded);
+        }
+        else if (hookStateCached == HookAliveStore.State.VERSION_MISMATCH)
+        {
+            state = getString(R.string.state_hook_outdated);
+        }
+        else
+        {
+            // Null only until the first background load lands. Claiming "running"
+            // there would flash a green light we have not earned yet.
+            state = hookStateCached == null
+                    ? getString(R.string.state_checking)
+                    : getString(R.string.state_running);
+        }
 
         int count = countRules(rulesInput == null
                 ? prefs().getString(RegexConfig.KEY_RULES, "")
@@ -1986,26 +2353,55 @@ public final class MainActivity extends Activity
                 ? prefs().getString(RegexConfig.KEY_CONTENT_RULES, "")
                 : contentRulesInput.getText().toString());
         boolean contentOn = contentEnabledSwitch != null && contentEnabledSwitch.isChecked();
+        boolean masterOff = masterSwitch != null && !masterSwitch.isChecked();
 
-        statusView.setText(getString(R.string.status_text_fmt, state, count, allowCount,
-                appWhitelist.size(), overrides.size(),
-                contentOn ? getString(R.string.content_on) : getString(R.string.content_off),
-                contentCount));
+        statusState.setText(state);
+        statusValues[0].setText(String.valueOf(count));
+        statusValues[1].setText(String.valueOf(allowCount));
+        statusValues[2].setText(String.valueOf(appWhitelist.size()));
+        statusValues[3].setText(String.valueOf(overrides.size()));
+        statusValues[4].setText(String.valueOf(contentCount));
+        statusValues[5].setText(contentOn
+                ? getString(R.string.content_on)
+                : getString(R.string.content_off));
 
-        if (safeMode)
+        // Root mode earns its green only on a confirmed live hook of this
+        // version; anything else is a real problem the user has to act on
+        // (enable the module, tick the scope, reboot).
+        boolean hookTrouble = !rf && hookStateCached != null
+                && hookStateCached != HookAliveStore.State.ALIVE;
+        boolean warnStyle = safeMode || (rf && !listenerConnected) || hookTrouble;
+        int text = warnStyle ? COLOR_WARN_TEXT : Color.WHITE;
+        int label = warnStyle ? 0xCC9A5B00 : 0xB3E7ECFF;
+        statusBox.setBackground(roundBg(warnStyle ? COLOR_WARN_BG : 0x22FFFFFF, dp(16)));
+        statusDivider.setBackgroundColor(warnStyle ? 0x339A5B00 : 0x33FFFFFF);
+        statusState.setTextColor(text);
+        for (int i = 0; i < statusValues.length; i++)
         {
-            statusView.setTextColor(COLOR_WARN_TEXT);
-            statusView.setBackground(roundBg(COLOR_WARN_BG, dp(14)));
+            statusValues[i].setTextColor(text);
+            statusLabels[i].setTextColor(label);
         }
-        else
-        {
-            statusView.setTextColor(Color.WHITE);
-            statusView.setBackground(roundBg(0x22FFFFFF, dp(14)));
-        }
+        // A green dot next to "master switch is off" — or next to a state we
+        // have not established yet — would be the same kind of lie the old
+        // grant-only status banner told.
+        boolean unproven = masterOff || (!rf && hookStateCached == null);
+        statusDot.setBackground(roundBg(
+                warnStyle ? COLOR_WARN_TEXT : (unproven ? 0x99FFFFFF : 0xFF4ADE80), dp(4)));
 
         if (clearSafeModeButton != null)
         {
             clearSafeModeButton.setVisibility(safeMode ? View.VISIBLE : View.GONE);
+        }
+
+        refreshRootFreeUi(rf, listenerGranted);
+    }
+
+    /** The access prompt is only meaningful in root-free mode, and only while it is missing. */
+    private void refreshRootFreeUi(boolean rf, boolean listenerGranted)
+    {
+        if (grantAccessButton != null)
+        {
+            grantAccessButton.setVisibility(rf && !listenerGranted ? View.VISIBLE : View.GONE);
         }
     }
 

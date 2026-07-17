@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
+    <!-- Root-free mode intercepts from this app's own process, so being frozen by
+         Doze means silently intercepting nothing. Lets PermissionsActivity raise
+         the platform's own exemption dialog; the user still has to accept it. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/app_icon"
@@ -55,6 +60,25 @@
         <activity
             android:name=".BlockedNotificationsActivity"
             android:exported="false" />
+
+        <activity
+            android:name=".SetupModeActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".PermissionsActivity"
+            android:exported="false" />
+
+        <!-- ===== Root-free path: standard NotificationListenerService ===== -->
+        <service
+            android:name=".RootFreeNotificationListener"
+            android:exported="true"
+            android:label="@string/rootfree_service_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
     </application>
 
 </manifest>

@@ -170,8 +170,12 @@ public final class WhitelistActivity extends Activity
             Toast.makeText(this, getString(R.string.toast_regex_invalid_fmt, bad), Toast.LENGTH_LONG).show();
             return;
         }
+        // persist() reports success unconditionally in root-free mode (nothing to
+        // sync), so the success string has to be picked by mode here — reusing the
+        // root one claimed it had synced to a hook that does not exist.
+        final boolean rf = rootFree();
         persist(ok -> Toast.makeText(this,
-                ok ? getString(R.string.toast_saved_synced)
+                ok ? getString(rf ? R.string.toast_saved_rootfree : R.string.toast_saved_synced)
                         : getString(R.string.toast_allow_save_partial),
                 Toast.LENGTH_LONG).show());
     }
@@ -520,33 +524,46 @@ public final class WhitelistActivity extends Activity
     // Persistence (preserves the fields owned by the main screen)
     // ------------------------------------------------------------------
 
-    /** Config lives under /data/system and may need su, so read it off the main thread. */
+    /**
+     * Root mode: config lives under /data/system and may need su, so read it
+     * off the main thread. Root-free mode: mnblocker_prefs is already the
+     * source of truth (same uid as the listener), so this applies the pref
+     * values synchronously — no su, no wait.
+     */
     private void loadCurrent()
     {
         SharedPreferences sp = prefs();
         final String prefAllow = sp.getString(RegexConfig.KEY_ALLOW_RULES, "");
         final String prefApps = sp.getString(RegexConfig.KEY_APP_WHITELIST, "");
 
-        Bg.load(this, ConfigFileStore::readForApp, disk ->
+        if (rootFree())
         {
-            String allow = disk.hasValue ? disk.allowRules : prefAllow;
-            String appList = disk.hasValue ? disk.appWhitelist : prefApps;
+            applyLoadedState(prefAllow, prefApps);
+            return;
+        }
 
-            allowInput.setText(allow);
-            appWhitelist.clear();
-            if (!TextUtils.isEmpty(appList))
+        Bg.load(this, ConfigFileStore::readForApp, disk ->
+                applyLoadedState(
+                        disk.hasValue ? disk.allowRules : prefAllow,
+                        disk.hasValue ? disk.appWhitelist : prefApps));
+    }
+
+    private void applyLoadedState(String allow, String appList)
+    {
+        allowInput.setText(allow);
+        appWhitelist.clear();
+        if (!TextUtils.isEmpty(appList))
+        {
+            for (String line : appList.split("\\r?\\n"))
             {
-                for (String line : appList.split("\\r?\\n"))
+                String t = line.trim();
+                if (!t.isEmpty())
                 {
-                    String t = line.trim();
-                    if (!t.isEmpty())
-                    {
-                        appWhitelist.add(t);
-                    }
+                    appWhitelist.add(t);
                 }
             }
-            renderAppList();
-        });
+        }
+        renderAppList();
     }
 
     /**
@@ -568,6 +585,17 @@ public final class WhitelistActivity extends Activity
                 .putString(RegexConfig.KEY_APP_WHITELIST, appList)
                 .apply();
 
+        if (rootFree())
+        {
+            // The listener reads mnblocker_prefs directly (same uid, no su
+            // bridge) — nothing here can fail, so this always reports success.
+            if (then != null)
+            {
+                then.accept(true);
+            }
+            return;
+        }
+
         Bg.load(this, () ->
         {
             ConfigFileStore.ConfigSnapshot cur = ConfigFileStore.readForApp();
@@ -582,9 +610,11 @@ public final class WhitelistActivity extends Activity
                     : sp.getBoolean(RegexConfig.KEY_CONTENT_ENABLED, false);
             String contentRules = cur.hasValue ? cur.contentRules
                     : sp.getString(RegexConfig.KEY_CONTENT_RULES, "");
+            String mode = cur.hasValue ? cur.operatingMode
+                    : sp.getString(RegexConfig.KEY_OPERATING_MODE, RegexConfig.MODE_ROOT);
 
             return ConfigFileStore.writeFromApp(master, matchDesc, rules, allow, overrides,
-                    contentEnabled, contentRules, appList);
+                    contentEnabled, contentRules, appList, mode);
         }, ok ->
         {
             if (then != null)
@@ -605,6 +635,13 @@ public final class WhitelistActivity extends Activity
         {
             return getSharedPreferences(RegexConfig.PREFS_NAME, Context.MODE_PRIVATE);
         }
+    }
+
+    /** See MainActivity#rootFree() — same pref, same "never spawns su" contract. */
+    private boolean rootFree()
+    {
+        return RegexConfig.MODE_ROOTFREE.equals(
+                prefs().getString(RegexConfig.KEY_OPERATING_MODE, RegexConfig.MODE_ROOT));
     }
 
     private String firstInvalidRegex(String blob)

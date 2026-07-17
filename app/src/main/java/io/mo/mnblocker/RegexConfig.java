@@ -48,6 +48,10 @@ final class RegexConfig {
     static final String KEY_CONTENT_ENABLED = "content_enabled";
     static final String KEY_CONTENT_RULES = "content_rules";
     static final String KEY_APP_WHITELIST = "app_whitelist";
+    /** Which interception path is active: {@link #MODE_ROOT} or {@link #MODE_ROOTFREE}. */
+    static final String KEY_OPERATING_MODE = "operating_mode";
+    static final String MODE_ROOT = "root";
+    static final String MODE_ROOTFREE = "rootfree";
 
     private static final String MODULE_PKG = "io.mo.mnblocker";
     private static final String RULES_FILE = HookLogger.DIR + "/rules.txt";
@@ -61,7 +65,7 @@ final class RegexConfig {
      * title / text) but the SAME allow whitelist as {@link #matcher}, so the
      * verification-code / IM safety valve protects content interception too.
      */
-    private volatile RuleMatcher contentMatcher = RuleMatcher.compile(null, null);
+    private volatile RuleMatcher contentMatcher = RuleMatcher.compileContent(null, null);
     private long configFileLastModified = -1L;
     /** key "pkg|id" -> true (force block) / false (force allow). */
     private final Map<String, Boolean> overrides = new HashMap<>();
@@ -71,6 +75,13 @@ final class RegexConfig {
     private boolean contentEnabled = false;
     /** Packages whose notifications are fully exempt from any interception. */
     private final Set<String> appWhitelist = new LinkedHashSet<>();
+    /**
+     * Which path the user picked: {@link #MODE_ROOT} (default, hook stays active)
+     * or {@link #MODE_ROOTFREE} (hook restores every channel and stops touching
+     * anything — see docs/rootfree-mode-plan.md §9.1). Old installs without this
+     * key in either source must keep behaving as root mode, never go silent.
+     */
+    private String operatingMode = MODE_ROOT;
 
     private RegexConfig(XSharedPreferences xsp) {
         this.xsp = xsp;
@@ -123,6 +134,7 @@ final class RegexConfig {
                     masterEnabled = xsp.getBoolean(KEY_MASTER_ENABLED, true);
                     matchDescription = xsp.getBoolean(KEY_MATCH_DESC, true);
                     contentEnabled = xsp.getBoolean(KEY_CONTENT_ENABLED, false);
+                    operatingMode = xsp.getString(KEY_OPERATING_MODE, MODE_ROOT);
                     addLines(blockRaw, xsp.getString(KEY_RULES, ""));
                     addLines(allowRaw, xsp.getString(KEY_ALLOW_RULES, ""));
                     addLines(contentRaw, xsp.getString(KEY_CONTENT_RULES, ""));
@@ -144,6 +156,7 @@ final class RegexConfig {
                 masterEnabled = disk.masterEnabled;
                 matchDescription = disk.matchDescription;
                 contentEnabled = disk.contentEnabled;
+                operatingMode = disk.operatingMode;
                 addLines(blockRaw, disk.rules);
                 addLines(allowRaw, disk.allowRules);
                 addLines(contentRaw, disk.contentRules);
@@ -172,8 +185,9 @@ final class RegexConfig {
 
         // ---- compile via the shared engine (default block rule injected there) ----
         matcher = RuleMatcher.compile(blockRaw, allowRaw);
-        // Content engine reuses the SAME allow whitelist as the safety valve.
-        contentMatcher = RuleMatcher.compile(contentRaw, allowRaw);
+        // Content engine reuses the SAME allow whitelist as the safety valve,
+        // but NOT the built-in default rule — that one describes a channel.
+        contentMatcher = RuleMatcher.compileContent(contentRaw, allowRaw);
 
         HookLogger.i("Loaded " + matcher.blockRules().size() + " block rule(s) + "
                 + matcher.allowRules().size() + " allow rule(s) + "
@@ -181,7 +195,8 @@ final class RegexConfig {
                 + overrides.size() + " override(s)"
                 + " | masterEnabled=" + masterEnabled
                 + " matchDescription=" + matchDescription
-                + " contentEnabled=" + contentEnabled);
+                + " contentEnabled=" + contentEnabled
+                + " operatingMode=" + operatingMode);
     }
 
     private void parseOverrides(String json) {
@@ -212,6 +227,16 @@ final class RegexConfig {
 
     boolean isMasterEnabled() {
         return masterEnabled;
+    }
+
+    /**
+     * @return true if the root (Xposed hook) path should be active. False means
+     *         the user switched to the root-free listener path, and the hook
+     *         must restore every channel it previously silenced rather than
+     *         just going quiet (see docs/rootfree-mode-plan.md §9.1).
+     */
+    boolean isRootModeActive() {
+        return !MODE_ROOTFREE.equals(operatingMode);
     }
 
     boolean isMatchDescription() {
