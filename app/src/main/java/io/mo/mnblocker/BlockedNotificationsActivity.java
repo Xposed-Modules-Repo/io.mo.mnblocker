@@ -97,7 +97,22 @@ public final class BlockedNotificationsActivity extends Activity
     private void load()
     {
         final String p = pkg;
-        Bg.load(this, () -> ContentBlockLogStore.readForApp(p), this::render);
+        if (rootFree())
+        {
+            Bg.load(this, () -> RootFreeBlockLogStore.readForApp(this, p), this::render);
+        }
+        else
+        {
+            Bg.load(this, () -> ContentBlockLogStore.readForApp(p), this::render);
+        }
+    }
+
+    /** See MainActivity#rootFree() — same pref, same "never spawns su" contract. */
+    private boolean rootFree()
+    {
+        return RegexConfig.MODE_ROOTFREE.equals(
+                getSharedPreferences(RegexConfig.PREFS_NAME, MODE_PRIVATE)
+                        .getString(RegexConfig.KEY_OPERATING_MODE, RegexConfig.MODE_ROOT));
     }
 
     private void render(List<ContentBlockLogStore.Entry> entries)

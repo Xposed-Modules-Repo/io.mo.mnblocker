@@ -20,6 +20,13 @@ android {
         }
     }
 
+    buildFeatures {
+        // HookAliveStore stamps BuildConfig.VERSION_NAME into its beacon so the
+        // UI can tell a live hook built from this APK from one still running the
+        // previous version out of system_server.
+        buildConfig true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
@@ -32,4 +39,8 @@ dependencies {
 
     // Local JVM unit tests for the pure rule engine (RuleMatcher).
     testImplementation 'junit:junit:4.13.2'
+    // Android's mockable android.jar stubs org.json (throws on every call) in
+    // plain JVM unit tests; the real impl is needed to test the root-free
+    // stores' JSON read/write. Test-only — never bundled into the APK.
+    testImplementation 'org.json:json:20231013'
 }

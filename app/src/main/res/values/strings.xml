@@ -10,13 +10,8 @@
 
     <!-- ===== AboutActivity ===== -->
     <string name="about_version_fmt">版本号 %1$s</string>
-    <string name="about_description"><![CDATA[说明：
-• 开关 ON = 拦截该类别通知，OFF = 允许。
-• 手动开关属于单独覆盖，优先级高于正则。
-• Hook 日志：%1$s/hook.log]]></string>
     <string name="about_source_title">源码</string>
     <string name="about_language_title">语言</string>
-    <string name="about_language_desc">选择界面显示语言，切换后应用会重启。</string>
     <string name="lang_zh_label">简体中文</string>
     <string name="lang_en_label">English</string>
 
@@ -56,10 +51,11 @@
 .*营销.*
 .*(推广|促销|优惠).*
 ^ads?_.*]]></string>
-    <string name="content_section_title">内容级拦截（实验性）</string>
+    <string name="content_section_title">内容级拦截</string>
     <string name="content_section_desc">按通知的标题/正文匹配并拦截整条通知，可拦下共享或“默认”通道推送的营销通知。作用于每一条通知；更新模块后需重启设备一次以载入 Hook，之后开关与规则修改均即时生效。使用下方独立规则，并同样受上方放行白名单保护；前台服务通知不会被拦截。默认关闭，请谨慎开启。</string>
+    <string name="content_section_desc_rootfree">按通知的标题/正文匹配并拦截整条通知，可拦下共享或“默认”通道推送的营销通知。作用于每一条通知，开关与规则修改即时生效，无需重启。使用下方独立规则，并同样受上方放行白名单保护；前台服务通知不会被拦截。默认关闭，请谨慎开启。</string>
     <string name="switch_content_enable_title">启用内容级拦截</string>
-    <string name="switch_content_enable_sub">在通知入队时按内容匹配（实验性）。</string>
+    <string name="switch_content_enable_sub">在通知入队时按内容匹配。</string>
     <string name="content_rules_hint"><![CDATA[内容拦截正则，一行一条（一行内可用 | 匹配多个关键词）
 
 示例：
@@ -68,6 +64,7 @@
     <string name="channel_card_title">已检测到的通知类别</string>
     <string name="switch_only_matched_title">仅显示正则命中的类别</string>
     <string name="switch_only_matched_sub">关闭后会显示 Hook 记录到的全部通知类别。 </string>
+    <string name="switch_only_matched_sub_rootfree">关闭后会显示已记录到的全部通知类别。 </string>
     <string name="action_refresh">刷新</string>
     <string name="toast_refreshed">已刷新</string>
     <string name="sort_by_app">按应用</string>
@@ -77,16 +74,20 @@
     <string name="action_block_all">批量拦截</string>
     <string name="action_allow_all">批量允许</string>
     <string name="action_select_all_clear">全选/清空</string>
+    <string name="action_reset_default">恢复默认（清除单独覆盖）</string>
 
     <string name="toast_select_first">请先勾选要操作的类别</string>
     <string name="toast_list_empty">列表为空</string>
     <string name="toast_blocked_n_fmt">已拦截 %1$d 项</string>
     <string name="toast_allowed_n_fmt">已允许 %1$d 项</string>
+    <string name="toast_reset_n_fmt">已恢复 %1$d 项为默认（跟随正则规则）</string>
+    <string name="toast_no_override">所选类别没有单独覆盖，无需恢复</string>
 
     <string name="batch_hint_multi_fmt">多选模式：批量按钮仅作用于已勾选的 %1$d 项</string>
     <string name="batch_hint_normal_fmt">普通模式：批量按钮作用于当前显示的 %1$d 项</string>
 
     <string name="empty_no_data">暂无数据。等待 App 创建通知类别后点刷新；若仍为空，请确认 root 读取权限。</string>
+    <string name="empty_no_data_rootfree">暂无数据。免 Root 模式只在类别推送过通知时才能记录它，列表会随使用逐步补全；开启前就存在、之后未再推送的旧类别不会出现。</string>
     <string name="empty_no_regex_match">当前没有正则命中的类别。可关闭“仅显示正则命中的类别”查看全部。 </string>
 
     <string name="list_header_zero_fmt">显示 0 个 · 已记录 %1$d 个</string>
@@ -105,9 +106,15 @@
     <string name="state_safe_mode">⚠ 安全模式已触发，Hook 已停用</string>
     <string name="state_running">正常运行</string>
     <string name="state_master_off">总开关已关闭</string>
-    <string name="status_text_fmt"><![CDATA[状态：%1$s
-自定义正则：%2$d 条 · 内置默认：1 条 · 白名单：%3$d 条 · App白名单：%4$d 个 · 单独覆盖：%5$d 项
-内容级拦截：%6$s · 内容规则：%7$d 条]]></string>
+    <string name="state_checking">检查中…</string>
+    <string name="state_hook_not_loaded">⚠ Hook 未生效，请检查 LSPosed 中是否已启用模块并勾选「Android 系统框架」作用域，然后重启设备</string>
+    <string name="state_hook_outdated">⚠ 模块已更新，重启设备后新版本才会生效（当前系统里跑的仍是旧版 Hook）</string>
+    <string name="status_label_rules">自定义正则</string>
+    <string name="status_label_allow">放行白名单</string>
+    <string name="status_label_apps">应用白名单</string>
+    <string name="status_label_overrides">单独覆盖</string>
+    <string name="status_label_content_rules">内容规则</string>
+    <string name="status_label_content">内容级拦截</string>
     <string name="content_on">开启</string>
     <string name="content_off">关闭</string>
 
@@ -135,6 +142,7 @@
 
     <string name="toast_regex_invalid_fmt">正则有误：%1$s</string>
     <string name="toast_saved_synced">已保存并同步到 Hook</string>
+    <string name="toast_saved_rootfree">已保存，立即生效</string>
     <string name="toast_saved_sync_failed">已保存到本地，但同步到 Hook 失败，请检查 root 授权</string>
     <string name="toast_config_sync_failed_fmt">同步到 %1$s 失败，请检查 root 授权</string>
 
@@ -160,6 +168,61 @@
     <string name="toast_app_whitelist_save_failed">保存失败，请检查 root 授权</string>
     <string name="app_whitelist_empty">尚未添加任何应用。点击“添加应用”选择要整体放行的 App。</string>
     <string name="action_remove">移除</string>
+
+    <!-- ===== Root-free mode (NotificationListenerService) ===== -->
+    <string name="rootfree_service_label">营销通知拦截器（免 Root）</string>
+    <string name="setup_title">选择拦截模式</string>
+    <string name="setup_subtitle">两种模式二选一，随时可在设置页切换。</string>
+    <string name="setup_root_title">Root 模式</string>
+    <string name="setup_root_desc"><![CDATA[需要 Root 权限并安装 LSPosed，将本模块添加到 Xposed 作用域。
+通知类别被拦截后完全静默，不会出现再消失。]]></string>
+    <string name="setup_choose_root">选择 Root 模式</string>
+    <string name="setup_rootfree_title">免 Root 模式</string>
+    <string name="setup_rootfree_desc"><![CDATA[只需在系统设置中授予「通知使用权」，无需 Root / Magisk / KernelSU / LSPosed。
+受系统限制，被拦截的通知会先短暂出现（可能有提示音）再被撤销；无法感知开启前就存在、之后未再触发的旧通知类别。]]></string>
+    <string name="setup_choose_rootfree">选择免 Root 模式</string>
+
+    <!-- ===== PermissionsActivity ===== -->
+    <string name="perm_page_title">权限设置</string>
+    <string name="perm_entry_title">权限与保活</string>
+    <string name="perm_entry_desc">通知使用权、电池优化与后台保活设置</string>
+
+    <string name="perm_required_title">必需权限</string>
+    <string name="perm_listener_title">通知使用权</string>
+    <string name="perm_listener_desc">读取并撤销通知</string>
+
+    <string name="perm_keepalive_title">后台保活（建议）</string>
+
+    <string name="perm_battery_title">电池优化白名单</string>
+    <string name="perm_battery_desc">允许应用在后台持续运行</string>
+
+    <string name="perm_power_policy_title">省电策略 → 无限制</string>
+    <string name="perm_power_policy_desc">小米独立于系统电池优化的电源管理，无法读取状态</string>
+
+    <string name="perm_autostart_title">自启动</string>
+    <string name="perm_autostart_desc">允许应用被唤起，无法读取状态</string>
+
+    <string name="perm_lock_recents_title">锁定后台</string>
+    <string name="perm_lock_recents_desc">在最近任务界面下拉本应用卡片，无接口，需手动</string>
+
+    <string name="perm_keepalive_notice">免 Root 拦截只在本应用进程存活时生效，被系统清理后会静默失效。以上设置降低被清理的概率，但不保证；拦截失效时打开本应用即可恢复。Root 模式不需要这些设置。</string>
+
+    <string name="perm_state_granted">已开启</string>
+    <string name="perm_state_missing">未开启</string>
+    <string name="perm_action_grant">去开启</string>
+    <string name="perm_action_open">去设置</string>
+
+    <string name="setup_keepalive_prompt_title">建议设置后台保活</string>
+    <string name="setup_keepalive_prompt_msg">免 Root 模式只在本应用进程存活时才能拦截通知。建议把省电策略设为「无限制」并在最近任务里锁定本应用，否则系统可能清理掉它、导致拦截静默失效。\n\n这些设置随时可在「关于 → 权限设置」里修改。</string>
+    <string name="setup_keepalive_prompt_go">去设置</string>
+    <string name="setup_keepalive_prompt_skip">稍后再说</string>
+
+    <string name="about_mode_title">运行模式</string>
+    <string name="rootfree_limitation_notice">免 Root 模式下：通知会先短暂出现再被撤销；无法感知开启前就存在、之后未再触发的旧通知类别；统计数据与 Root 模式分开记录。如需完全静默拦截，请使用 Root + LSPosed 模式。</string>
+    <string name="rootfree_grant_access_button">前往开启通知使用权</string>
+    <string name="state_rootfree_connected">免 Root 模式运行中（通知监听已连接）</string>
+    <string name="state_rootfree_not_granted">⚠ 免 Root 模式未生效，请前往开启通知使用权</string>
+    <string name="state_rootfree_reconnecting">⚠ 免 Root 模式未在拦截：通知监听未连接（更新模块后常见），正在重连…</string>
 
     <!-- ===== DebugActivity ===== -->
     <string name="debug_title">🛠 调试模式</string>

@@ -111,6 +111,10 @@ final class NotificationHook {
         hookAmsForSafety(lpparam);
 
         hooksInstalled = true;
+        // Tell the settings UI, in the only way the two processes can talk, that
+        // a hook of this version is actually live. Deliberately placed after the
+        // guard above, so the beacon means "hooks are in", not "install() ran".
+        HookAliveStore.mark();
         HookLogger.i("NotificationHook hooks installed for package=" + lpparam.packageName);
     }
 
@@ -300,7 +304,7 @@ final class NotificationHook {
                     decisionReason = blockRule != null ? "regex:" + blockRule : "no-match";
                 }
 
-                if (!cfg.isMasterEnabled()) {
+                if (!cfg.isMasterEnabled() || !cfg.isRootModeActive()) {
                     // List is populated, but the master switch forbids changes.
                     if (shouldBlock) {
                         HookLogger.i("Master OFF — would block but skipping"
@@ -473,7 +477,7 @@ final class NotificationHook {
     private boolean applyExistingChannelDecision(String pkg, NotificationChannel channel,
                                                  int before, String allowRule,
                                                  String blockRule, RegexConfig cfg) {
-        if (!cfg.isMasterEnabled()) {
+        if (!cfg.isMasterEnabled() || !cfg.isRootModeActive()) {
             return restoreChannelIfAllowed(pkg, channel, before, cfg.overrideFor(pkg, channel.getId()),
                     true, "master-off");
         }

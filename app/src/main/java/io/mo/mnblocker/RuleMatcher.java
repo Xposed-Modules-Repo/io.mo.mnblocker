@@ -17,7 +17,8 @@ import java.util.regex.PatternSyntaxException;
  * Two rule sets:
  *  - block rules: a channel whose id / name / description matches counts as
  *    "marketing" and is silenced. The built-in default {@link #DEFAULT_BLOCK_RULE}
- *    is always present.
+ *    is always present in a channel set ({@link #compile}) — but never in a
+ *    content set ({@link #compileContent}); see that method for why.
  *  - allow rules (whitelist / safety valve): a channel that matches is NEVER
  *    blocked by a regex, protecting verification codes / IM even when a broad
  *    block rule would otherwise catch them.
@@ -55,15 +56,43 @@ final class RuleMatcher {
      * @param allowRules user allow / whitelist rules (may be null)
      */
     static RuleMatcher compile(Collection<String> blockRules, Collection<String> allowRules) {
+        return compile(blockRules, allowRules, true);
+    }
+
+    /**
+     * Compile a CONTENT-level rule set: same as {@link #compile} minus the
+     * built-in {@link #DEFAULT_BLOCK_RULE}.
+     *
+     * The default describes a channel ("a channel whose name says 营销"), and
+     * content rules are matched against a notification's title / text instead.
+     * Injecting it here silently dropped any notification whose body merely
+     * mentioned 营销 — an IM message about marketing, say — regardless of what
+     * the user typed in the content rule box, and with no way to remove it.
+     *
+     * An empty content rule set therefore blocks nothing, which is what
+     * "content interception on, no content rules" should mean.
+     *
+     * @param blockRules user content block rules (may be null / empty)
+     * @param allowRules the SAME allow whitelist as the channel set — the
+     *                   safety valve applies to content interception too
+     */
+    static RuleMatcher compileContent(Collection<String> blockRules, Collection<String> allowRules) {
+        return compile(blockRules, allowRules, false);
+    }
+
+    private static RuleMatcher compile(Collection<String> blockRules, Collection<String> allowRules,
+                                       boolean injectDefault) {
         List<Pattern> bp = new ArrayList<>();
         List<String> braw = new ArrayList<>();
-        addCompiled(DEFAULT_BLOCK_RULE, bp, braw);
+        if (injectDefault) {
+            addCompiled(DEFAULT_BLOCK_RULE, bp, braw);
+        }
         if (blockRules != null) {
             for (String r : blockRules) {
                 addCompiled(r, bp, braw);
             }
         }
-        if (bp.isEmpty()) {
+        if (injectDefault && bp.isEmpty()) {
             addCompiled(DEFAULT_BLOCK_RULE, bp, braw);
         }
 

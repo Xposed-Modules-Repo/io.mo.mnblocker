@@ -5,13 +5,8 @@
 
     <!-- ===== AboutActivity ===== -->
     <string name="about_version_fmt">Version %1$s</string>
-    <string name="about_description"><![CDATA[Notes:
-• Switch ON = block that channel\'s notifications, OFF = allow.
-• A manual switch is a per-channel override — it beats the regex rules.
-• Hook log: %1$s/hook.log]]></string>
     <string name="about_source_title">Source</string>
     <string name="about_language_title">Language</string>
-    <string name="about_language_desc">Choose the display language. The app restarts after switching.</string>
     <string name="lang_zh_label">简体中文</string>
     <string name="lang_en_label">English</string>
 
@@ -51,10 +46,11 @@ Examples:
 .*营销.*
 .*(推广|促销|优惠).*
 ^ads?_.*]]></string>
-    <string name="content_section_title">Content-Level Blocking (Experimental)</string>
+    <string name="content_section_title">Content-Level Blocking</string>
     <string name="content_section_desc">Matches a notification\'s title/text and blocks the whole notification — useful for marketing pushed on a shared or "default" channel that channel-level blocking cannot reach. Applies to every notification; after updating the module, reboot once to load the hook, then switches and rule edits take effect instantly. Uses its own rules below, and is protected by the same allow-whitelist above; foreground-service notifications are never blocked. Off by default — enable with care.</string>
+    <string name="content_section_desc_rootfree">Matches a notification\'s title/text and blocks the whole notification — useful for marketing pushed on a shared or "default" channel that channel-level blocking cannot reach. Applies to every notification; switches and rule edits take effect instantly, no reboot needed. Uses its own rules below, and is protected by the same allow-whitelist above; foreground-service notifications are never blocked. Off by default — enable with care.</string>
     <string name="switch_content_enable_title">Enable Content-Level Blocking</string>
-    <string name="switch_content_enable_sub">Matches content when a notification is enqueued (experimental).</string>
+    <string name="switch_content_enable_sub">Matches content when a notification is enqueued.</string>
     <string name="content_rules_hint"><![CDATA[Content-block regex, one rule per line (use | within a line to match multiple keywords)
 
 Example:
@@ -63,6 +59,7 @@ Example:
     <string name="channel_card_title">Detected Notification Channels</string>
     <string name="switch_only_matched_title">Show Only Regex-Matched Channels</string>
     <string name="switch_only_matched_sub">When off, shows every channel the hook has recorded. </string>
+    <string name="switch_only_matched_sub_rootfree">When off, shows every channel recorded so far. </string>
     <string name="action_refresh">Refresh</string>
     <string name="toast_refreshed">Refreshed</string>
     <string name="sort_by_app">By App</string>
@@ -72,16 +69,20 @@ Example:
     <string name="action_block_all">Block All</string>
     <string name="action_allow_all">Allow All</string>
     <string name="action_select_all_clear">Select All / Clear</string>
+    <string name="action_reset_default">Reset to Default (clear override)</string>
 
     <string name="toast_select_first">Select channels first</string>
     <string name="toast_list_empty">List is empty</string>
     <string name="toast_blocked_n_fmt">Blocked %1$d item(s)</string>
     <string name="toast_allowed_n_fmt">Allowed %1$d item(s)</string>
+    <string name="toast_reset_n_fmt">Reset %1$d item(s) to default (follow regex rules)</string>
+    <string name="toast_no_override">The selected channels have no override to clear</string>
 
     <string name="batch_hint_multi_fmt">Multi-select mode: batch buttons apply only to the %1$d checked item(s)</string>
     <string name="batch_hint_normal_fmt">Normal mode: batch buttons apply to the %1$d currently shown item(s)</string>
 
     <string name="empty_no_data">No data yet. Tap refresh after an app creates a notification channel; if still empty, check root read access.</string>
+    <string name="empty_no_data_rootfree">No data yet. Root-free mode can only record a channel once it has actually posted a notification, so this list fills in as you use the device; channels that existed before you enabled it and have not posted since will not appear.</string>
     <string name="empty_no_regex_match">No channels currently match the regex rules. Turn off "Show only regex-matched channels" to see everything. </string>
 
     <string name="list_header_zero_fmt">Showing 0 · Recorded %1$d</string>
@@ -100,9 +101,15 @@ Example:
     <string name="state_safe_mode">⚠ Safe mode triggered — hooks disabled</string>
     <string name="state_running">Running normally</string>
     <string name="state_master_off">Master switch is off</string>
-    <string name="status_text_fmt"><![CDATA[Status: %1$s
-Custom regex: %2$d · Built-in default: 1 · Whitelist: %3$d · App whitelist: %4$d · Overrides: %5$d
-Content-level blocking: %6$s · Content rules: %7$d]]></string>
+    <string name="state_checking">Checking…</string>
+    <string name="state_hook_not_loaded">⚠ Hook not active — check that the module is enabled in LSPosed with the "Android System Framework" scope ticked, then reboot</string>
+    <string name="state_hook_outdated">⚠ Module updated — reboot for the new version to take effect (system_server is still running the old hook)</string>
+    <string name="status_label_rules">Custom regex</string>
+    <string name="status_label_allow">Whitelist</string>
+    <string name="status_label_apps">App whitelist</string>
+    <string name="status_label_overrides">Overrides</string>
+    <string name="status_label_content_rules">Content rules</string>
+    <string name="status_label_content">Content blocking</string>
     <string name="content_on">On</string>
     <string name="content_off">Off</string>
 
@@ -130,6 +137,7 @@ Content-level blocking: %6$s · Content rules: %7$d]]></string>
 
     <string name="toast_regex_invalid_fmt">Invalid regex: %1$s</string>
     <string name="toast_saved_synced">Saved and synced to the hook</string>
+    <string name="toast_saved_rootfree">Saved — in effect immediately</string>
     <string name="toast_saved_sync_failed">Saved locally, but syncing to the hook failed — check root authorization</string>
     <string name="toast_config_sync_failed_fmt">Failed to sync to %1$s — check root authorization</string>
 
@@ -155,6 +163,61 @@ Content-level blocking: %6$s · Content rules: %7$d]]></string>
     <string name="toast_app_whitelist_save_failed">Save failed — check root authorization</string>
     <string name="app_whitelist_empty">No apps added yet. Tap "Add App" to pick apps to fully allow.</string>
     <string name="action_remove">Remove</string>
+
+    <!-- ===== Root-free mode (NotificationListenerService) ===== -->
+    <string name="rootfree_service_label">Marketing Notification Blocker (Root-Free)</string>
+    <string name="setup_title">Choose a Blocking Mode</string>
+    <string name="setup_subtitle">Pick one — you can switch anytime from Settings.</string>
+    <string name="setup_root_title">Root Mode</string>
+    <string name="setup_root_desc"><![CDATA[Requires root and LSPosed, with this module added to the Xposed scope.
+Blocked channels are fully silent — notifications never appear at all.]]></string>
+    <string name="setup_choose_root">Choose Root Mode</string>
+    <string name="setup_rootfree_title">Root-Free Mode</string>
+    <string name="setup_rootfree_desc"><![CDATA[Only needs "Notification access" granted in system settings — no root / Magisk / KernelSU / LSPosed.
+Due to platform limits, a blocked notification briefly appears (possibly with a sound) before being cancelled; pre-existing channels that never trigger again cannot be discovered.]]></string>
+    <string name="setup_choose_rootfree">Choose Root-Free Mode</string>
+
+    <!-- ===== PermissionsActivity ===== -->
+    <string name="perm_page_title">Permissions</string>
+    <string name="perm_entry_title">Permissions &amp; Keep-Alive</string>
+    <string name="perm_entry_desc">Notification access, battery optimisation and background survival</string>
+
+    <string name="perm_required_title">Required</string>
+    <string name="perm_listener_title">Notification access</string>
+    <string name="perm_listener_desc">Read and cancel notifications</string>
+
+    <string name="perm_keepalive_title">Background survival (recommended)</string>
+
+    <string name="perm_battery_title">Battery optimisation exemption</string>
+    <string name="perm_battery_desc">Lets the app keep running in the background</string>
+
+    <string name="perm_power_policy_title">Power policy → No restrictions</string>
+    <string name="perm_power_policy_desc">Xiaomi\'s own power manager, separate from battery optimisation; state unreadable</string>
+
+    <string name="perm_autostart_title">Autostart</string>
+    <string name="perm_autostart_desc">Lets the app be woken; state unreadable</string>
+
+    <string name="perm_lock_recents_title">Lock in recents</string>
+    <string name="perm_lock_recents_desc">Pull down this app\'s card in recents; no API, manual only</string>
+
+    <string name="perm_keepalive_notice">Root-free interception only works while this app\'s process is alive, and stops silently once the system clears it. These settings reduce the chance of that, but do not guarantee it; open the app to restore interception. Root mode needs none of them.</string>
+
+    <string name="perm_state_granted">Enabled</string>
+    <string name="perm_state_missing">Not enabled</string>
+    <string name="perm_action_grant">Enable</string>
+    <string name="perm_action_open">Open</string>
+
+    <string name="setup_keepalive_prompt_title">Set up background survival</string>
+    <string name="setup_keepalive_prompt_msg">Root-free mode only intercepts while this app\'s process is alive. Setting the power policy to "No restrictions" and locking the app in recents is recommended — otherwise the system may clear it away and interception silently stops.\n\nYou can change these any time under About → Permissions.</string>
+    <string name="setup_keepalive_prompt_go">Set up</string>
+    <string name="setup_keepalive_prompt_skip">Later</string>
+
+    <string name="about_mode_title">Operating Mode</string>
+    <string name="rootfree_limitation_notice">In root-free mode: notifications briefly appear before being cancelled; channels that existed before enabling and never fire again cannot be discovered; stats are recorded separately from root mode. For fully silent blocking, use Root + LSPosed mode.</string>
+    <string name="rootfree_grant_access_button">Open Notification Access Settings</string>
+    <string name="state_rootfree_connected">Root-free mode running (listener connected)</string>
+    <string name="state_rootfree_not_granted">⚠ Root-free mode inactive — grant notification access</string>
+    <string name="state_rootfree_reconnecting">⚠ Root-free mode is not intercepting: listener not connected (common after a module update) — reconnecting…</string>
 
     <!-- ===== DebugActivity ===== -->
     <string name="debug_title">🛠 Debug Mode</string>

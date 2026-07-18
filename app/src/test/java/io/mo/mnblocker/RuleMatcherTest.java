@@ -105,4 +105,51 @@ public final class RuleMatcherTest {
     public void allowRulesEmptyByDefault() {
         assertArrayEquals(new String[0], m(null, null).allowRules().toArray());
     }
+
+    // ------------------------------------------------------------------
+    // content rule sets (compileContent): default rule must NOT leak in
+    // ------------------------------------------------------------------
+
+    @Test
+    public void contentSetDoesNotInjectDefaultRule() {
+        // The bug: an IM message whose BODY merely said 营销 got dropped by the
+        // built-in channel default, even though the user's content rules never
+        // mentioned it.
+        RuleMatcher rm = RuleMatcher.compileContent(Arrays.asList("免息"), null);
+        assertEquals(Collections.singletonList("免息"), rm.blockRules());
+        assertFalse(rm.shouldBlock("晚风吻花眠", "[5条]晚风吻花眠: 营销"));
+        assertNull(rm.firstBlockMatch("营销"));
+        // the user's own content rule still works
+        assertTrue(rm.shouldBlock("晚风吻花眠", "[7条]晚风吻花眠: 免息"));
+    }
+
+    @Test
+    public void emptyContentSetBlocksNothing() {
+        // "content interception on, no content rules" must mean exactly that —
+        // not "fall back to blocking 营销".
+        for (RuleMatcher rm : Arrays.asList(
+                RuleMatcher.compileContent(null, null),
+                RuleMatcher.compileContent(Collections.<String>emptyList(), null),
+                RuleMatcher.compileContent(Arrays.asList("", "  ", "# only a comment"), null))) {
+            assertArrayEquals(new String[0], rm.blockRules().toArray());
+            assertFalse(rm.shouldBlock("营销", "双十一营销活动"));
+        }
+    }
+
+    @Test
+    public void contentSetStillHonoursAllowWhitelist() {
+        RuleMatcher rm = RuleMatcher.compileContent(
+                Arrays.asList(".*(优惠|促销).*"), Arrays.asList(".*验证码.*"));
+        assertTrue(rm.shouldBlock("限时优惠"));
+        assertFalse(rm.shouldBlock("您的验证码是1234，优惠码勿泄露")); // allow wins
+    }
+
+    @Test
+    public void channelSetStillInjectsDefault() {
+        // Guards the other half: compile() must keep injecting the default, so
+        // fixing the content set cannot silently weaken channel blocking.
+        RuleMatcher rm = RuleMatcher.compile(Arrays.asList("免息"), null);
+        assertEquals(Arrays.asList(RuleMatcher.DEFAULT_BLOCK_RULE, "免息"), rm.blockRules());
+        assertTrue(rm.shouldBlock("ch", "营销推广", null));
+    }
 }
