@@ -217,16 +217,19 @@ final class ShellUtils {
     /** Read the current Xposed log level. Returns 4 (ERROR) if not set. */
     static int getXposedLogLevel() {
         try {
-            // Try direct read first.
+            // Try direct read first. The open must be attempted rather than
+            // predicted from canRead(): access(2) checks DAC only, so on a
+            // SELinux ROM it says "readable" for a file the open then denies —
+            // and letting that exception escape would skip the su fallback below.
             java.io.File f = new java.io.File(XPOSED_LOG_LEVEL_FILE);
-            if (f.exists() && f.canRead()) {
-                byte[] buf = new byte[8];
-                try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
-                    int n = fis.read(buf);
-                    if (n > 0) {
-                        return Integer.parseInt(new String(buf, 0, n, "UTF-8").trim());
-                    }
+            byte[] buf = new byte[8];
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
+                int n = fis.read(buf);
+                if (n > 0) {
+                    return Integer.parseInt(new String(buf, 0, n, "UTF-8").trim());
                 }
+            } catch (Throwable ignored) {
+                // absent or denied — su below is the authority
             }
             // Fall back to su.
             ShellResult r = runSu("cat '" + XPOSED_LOG_LEVEL_FILE + "' 2>/dev/null");

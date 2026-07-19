@@ -114,24 +114,32 @@ final class HookAliveStore {
      * genuinely absent (module never loaded) is the answer we are looking for,
      * not a permission failure, and shelling out to rediscover that would spawn
      * su on the healthy "module is off" path.
+     *
+     * The direct attempt must be an actual open, the way ConfigFileStore does it.
+     * Gating it on {@link File#canRead()} first was a live bug: canRead() is an
+     * access(2) call, which on a SELinux ROM checks DAC only — the beacon is 0666,
+     * so it answered "yes", the open that followed was denied by SELinux
+     * (untrusted_app reading system_data_file), and the exception left us
+     * returning null without ever reaching the su fallback. A perfectly live hook
+     * then reported NOT_LOADED forever.
      */
     private static String readRaw() {
-        try {
-            File f = new File(FILE);
-            if (f.canRead()) {
-                byte[] buf = new byte[128];
-                try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
-                    int n = fis.read(buf);
-                    if (n > 0) {
-                        return new String(buf, 0, n, "UTF-8");
-                    }
-                }
-                return null;
-            }
-            if (ShellUtils.missIsConclusive(FILE)) {
-                return null; // directory visible, no beacon => hook never ran
-            }
-            return ShellUtils.suReadFile(FILE);
+        String direct = readDirect();
+        if (direct != null) {
+            return direct;
+        }
+        if (ShellUtils.missIsConclusive(FILE)) {
+            return null; // directory visible, no beacon => hook never ran
+        }
+        return ShellUtils.suReadFile(FILE);
+    }
+
+    /** Plain read; null on "absent" and on "denied" alike — the caller sorts it out. */
+    private static String readDirect() {
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(new File(FILE))) {
+            byte[] buf = new byte[128];
+            int n = fis.read(buf);
+            return n > 0 ? new String(buf, 0, n, "UTF-8") : null;
         } catch (Throwable t) {
             return null;
         }
