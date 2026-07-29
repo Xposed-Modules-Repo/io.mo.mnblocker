@@ -109,6 +109,7 @@ public final class MainActivity extends Activity
     private String lastKnownMode;
     private TextView listHeader;
     private TextView batchHint;
+    private EditText searchQueryInput;
     private Switch onlyMatchedSwitch;
     private LinearLayout listContainer;
     private Button sortButton;
@@ -166,6 +167,9 @@ public final class MainActivity extends Activity
     private String lastStatsSignature;
     /** channel key -> regex verdict, memoised; cleared whenever the rules change. */
     private final Map<String, Boolean> regexCache = new HashMap<>();
+    private String activeJumpPkg;
+    private String activeJumpChannelId;
+    private long activeJumpTime;
 
     @Override
     protected void attachBaseContext(Context newBase)
@@ -246,7 +250,126 @@ public final class MainActivity extends Activity
         {
             pageFor(TAB_STATS);
             pageFor(TAB_MATCHED);
+            handleJumpIntent(getIntent());
         });
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent)
+    {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleJumpIntent(intent);
+    }
+
+    private void handleJumpIntent(Intent intent)
+    {
+        if (intent == null)
+        {
+            return;
+        }
+        String pkg = intent.getStringExtra(SystemUiHook.EXTRA_JUMP_PKG);
+        String channelId = intent.getStringExtra(SystemUiHook.EXTRA_JUMP_CHANNEL);
+        if (TextUtils.isEmpty(pkg))
+        {
+            return;
+        }
+
+        activeJumpPkg = pkg;
+        activeJumpChannelId = channelId;
+        activeJumpTime = System.currentTimeMillis();
+
+        setTabImmediate(TAB_MATCHED);
+
+        if (!TextUtils.isEmpty(channelId))
+        {
+            boolean found = false;
+            for (ChannelRecord r : channels)
+            {
+                if (pkg.equals(r.pkg) && channelId.equals(r.id))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                channels.add(new ChannelRecord(pkg, channelId, channelId, "", 3, false, System.currentTimeMillis()));
+            }
+        }
+
+        if (onlyMatchedSwitch != null && onlyMatchedSwitch.isChecked())
+        {
+            onlyMatchedSwitch.setChecked(false);
+        }
+
+        renderList();
+    }
+
+    private void jumpToChannelRow(String pkg, String channelId)
+    {
+        if (pageMatched == null || listContainer == null)
+        {
+            return;
+        }
+
+        View targetView = null;
+
+        // Priority 1: Exact row match for pkg + "|" + channelId
+        if (!TextUtils.isEmpty(channelId))
+        {
+            targetView = rowPool.get(pkg + "|" + channelId);
+            if (targetView == null)
+            {
+                for (Map.Entry<String, LinearLayout> entry : rowPool.entrySet())
+                {
+                    if (entry.getKey().equalsIgnoreCase(pkg + "|" + channelId))
+                    {
+                        targetView = entry.getValue();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Priority 2: Any channel row under this package (has toggle switch)
+        if (targetView == null && !rowPool.isEmpty())
+        {
+            for (Map.Entry<String, LinearLayout> entry : rowPool.entrySet())
+            {
+                if (entry.getKey().toLowerCase(Locale.ROOT).startsWith(pkg.toLowerCase(Locale.ROOT) + "|"))
+                {
+                    targetView = entry.getValue();
+                    break;
+                }
+            }
+        }
+
+        // Priority 3: Fall back to app group header only if no channel row exists
+        if (targetView == null)
+        {
+            targetView = headerPool.get(pkg);
+        }
+
+        if (targetView != null && pageMatched instanceof ScrollView)
+        {
+            final View viewToScroll = targetView;
+            final ScrollView scroll = (ScrollView) pageMatched;
+            scroll.post(() ->
+            {
+                int[] loc = new int[2];
+                viewToScroll.getLocationOnScreen(loc);
+                int[] scrollLoc = new int[2];
+                scroll.getLocationOnScreen(scrollLoc);
+                int relativeTop = loc[1] - scrollLoc[1] + scroll.getScrollY();
+                scroll.scrollTo(0, Math.max(0, relativeTop - dp(20)));
+
+                Springs.popIcon(viewToScroll);
+                final android.graphics.drawable.Drawable origBg = viewToScroll.getBackground();
+                viewToScroll.setBackground(roundBg(0xFFDCE6FF, dp(14)));
+                viewToScroll.postDelayed(() -> viewToScroll.setBackground(origBg), 1500);
+            });
+        }
     }
 
     @Override
@@ -842,6 +965,33 @@ public final class MainActivity extends Activity
         listHeader.setPadding(0, 0, 0, dp(8));
         card.addView(listHeader);
 
+        searchQueryInput = new EditText(this);
+        searchQueryInput.setHint(getString(R.string.search_channel_hint));
+        searchQueryInput.setHintTextColor(0xFFB0B6C3);
+        searchQueryInput.setTextSize(13);
+        searchQueryInput.setTextColor(COLOR_TEXT);
+        searchQueryInput.setSingleLine(true);
+        searchQueryInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+        searchQueryInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+        searchQueryInput.addTextChangedListener(new TextWatcher()
+        {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {}
+            @Override
+            public void afterTextChanged(Editable s)
+            {
+                selected.clear();
+                renderList();
+            }
+        });
+
+        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        searchLp.topMargin = dp(4);
+        searchLp.bottomMargin = dp(10);
+        card.addView(searchQueryInput, searchLp);
+
         onlyMatchedSwitch = cleanSwitch(getString(R.string.switch_only_matched_title),
                 getString(rootFree()
                         ? R.string.switch_only_matched_sub_rootfree
@@ -1216,6 +1366,32 @@ public final class MainActivity extends Activity
             hookStateCached = s.hookState;
             selected.retainAll(keySet());
             refreshStatus();
+
+            if (!TextUtils.isEmpty(activeJumpPkg) && (System.currentTimeMillis() - activeJumpTime < 8000))
+            {
+                if (!TextUtils.isEmpty(activeJumpChannelId))
+                {
+                    boolean found = false;
+                    for (ChannelRecord r : channels)
+                    {
+                        if (activeJumpPkg.equals(r.pkg) && activeJumpChannelId.equals(r.id))
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found)
+                    {
+                        channels.add(new ChannelRecord(activeJumpPkg, activeJumpChannelId, activeJumpChannelId, "", 3, false, System.currentTimeMillis()));
+                    }
+                }
+
+                if (onlyMatchedSwitch != null && onlyMatchedSwitch.isChecked())
+                {
+                    onlyMatchedSwitch.setChecked(false);
+                }
+            }
+
             renderList();
             refreshStats();
         });
@@ -1666,6 +1842,16 @@ public final class MainActivity extends Activity
             }
             listContainer.addView(rowFor(r));
         }
+
+        if (!TextUtils.isEmpty(activeJumpPkg) && (System.currentTimeMillis() - activeJumpTime < 8000))
+        {
+            final String jumpPkg = activeJumpPkg;
+            final String jumpChannel = activeJumpChannelId;
+            if (rootFrame != null)
+            {
+                rootFrame.post(() -> jumpToChannelRow(jumpPkg, jumpChannel));
+            }
+        }
     }
 
     /** A group header for {@code pkg}, created once and reused across renders. */
@@ -2024,18 +2210,33 @@ public final class MainActivity extends Activity
 
     private List<ChannelRecord> visibleChannels()
     {
-        if (onlyMatchedSwitch == null || !onlyMatchedSwitch.isChecked())
-        {
-            return new ArrayList<>(channels);
-        }
+        boolean filterOnlyMatched = onlyMatchedSwitch != null && onlyMatchedSwitch.isChecked();
+        String query = (searchQueryInput != null && searchQueryInput.getText() != null)
+                ? searchQueryInput.getText().toString().trim().toLowerCase(Locale.ROOT)
+                : "";
 
         List<ChannelRecord> out = new ArrayList<>();
         for (ChannelRecord r : channels)
         {
-            if (uiRegexMatched(r))
+            if (filterOnlyMatched && !uiRegexMatched(r))
             {
-                out.add(r);
+                continue;
             }
+
+            if (!query.isEmpty())
+            {
+                String label = appLabel(r.pkg).toLowerCase(Locale.ROOT);
+                String pkg = r.pkg.toLowerCase(Locale.ROOT);
+                String name = r.name != null ? r.name.toLowerCase(Locale.ROOT) : "";
+                String id = r.id != null ? r.id.toLowerCase(Locale.ROOT) : "";
+
+                if (!label.contains(query) && !pkg.contains(query) && !name.contains(query) && !id.contains(query))
+                {
+                    continue;
+                }
+            }
+
+            out.add(r);
         }
         return out;
     }

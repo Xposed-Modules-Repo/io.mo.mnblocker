@@ -14,39 +14,41 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage.LoadPackageParam;
 public final class XposedEntry implements IXposedHookLoadPackage {
 
     private static final String FRAMEWORK_PKG = "android";
+    private static final String SYSTEMUI_PKG = "com.android.systemui";
 
     // system_server loads the "android" package exactly once, so a single
     // SafetyManager instance per process is correct.
     private final SafetyManager safety = new SafetyManager();
 
-    // Retained for the process lifetime so its safe-mode FileObserver (and the
-    // deferred-install path it drives) is not garbage-collected.
+    // Retained for the process lifetime so safe-mode FileObservers
+    // and hooks are not garbage-collected.
     @SuppressWarnings("FieldCanBeLocal")
     private NotificationHook hook;
+    @SuppressWarnings("FieldCanBeLocal")
+    private SystemUiHook systemUiHook;
 
     @Override
     public void handleLoadPackage(LoadPackageParam lpparam) {
-        if (!FRAMEWORK_PKG.equals(lpparam.packageName)) {
-            return; // not the system framework — nothing to do
-        }
-        // Some ROMs load "android" in non-system processes; the real
-        // system_server has processName "system_server"... but that field is
-        // not on lpparam. The "android" package + system classloader check is
-        // the conventional, reliable signal, so we proceed.
+        if (FRAMEWORK_PKG.equals(lpparam.packageName)) {
+            HookLogger.ensureDir();
+            HookLogger.i("=== MarketingNotificationBlocker loading into system framework ===");
 
-        HookLogger.ensureDir();
-        HookLogger.i("=== MarketingNotificationBlocker loading into system framework ===");
+            try {
+                hook = new NotificationHook(safety);
+                hook.install(lpparam);
+            } catch (Throwable t) {
+                HookLogger.e("Fatal error during framework hook installation — aborting cleanly", t);
+            }
+        } else if (SYSTEMUI_PKG.equals(lpparam.packageName)) {
+            HookLogger.ensureDir();
+            HookLogger.i("=== MarketingNotificationBlocker loading into SystemUI ===");
 
-        try {
-            // install() installs the hooks only when hooking is allowed, and
-            // always starts a watcher on the safe-mode flag so a later clear
-            // re-enables them without a reboot. Even in safe mode we go through
-            // it — the module stays inert but ready to recover in place.
-            hook = new NotificationHook(safety);
-            hook.install(lpparam);
-        } catch (Throwable t) {
-            // A failure here must not take down system_server.
-            HookLogger.e("Fatal error during hook installation — aborting cleanly", t);
+            try {
+                systemUiHook = new SystemUiHook(safety);
+                systemUiHook.install(lpparam);
+            } catch (Throwable t) {
+                HookLogger.e("Fatal error during SystemUI hook installation — aborting cleanly", t);
+            }
         }
     }
 }
