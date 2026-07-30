@@ -30,22 +30,61 @@ final class SystemBars {
      */
     static void edgeToEdge(Activity activity, View root, View topTarget, View bottomTarget) {
         Window w = activity.getWindow();
+        w.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         applyDecorFlags(w);
         applyLightBars(w);
 
         final int baseTop = topTarget.getPaddingTop();
         final int baseBottom = bottomTarget.getPaddingBottom();
+        final int outerBaseBottom = topTarget.getPaddingBottom();
+
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            topTarget.setPadding(
-                    topTarget.getPaddingLeft(),
-                    baseTop + systemBarTop(insets),
-                    topTarget.getPaddingRight(),
-                    topTarget.getPaddingBottom());
-            bottomTarget.setPadding(
-                    bottomTarget.getPaddingLeft(),
-                    bottomTarget.getPaddingTop(),
-                    bottomTarget.getPaddingRight(),
-                    baseBottom + systemBarBottom(insets));
+            int top;
+            int sysBottom;
+            int imeBottom;
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                top = insets.getInsets(WindowInsets.Type.statusBars()).top;
+                sysBottom = insets.getInsets(WindowInsets.Type.navigationBars()).bottom;
+                imeBottom = insets.getInsets(WindowInsets.Type.ime()).bottom;
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                int rawBottom = insets.getSystemWindowInsetBottom();
+                if (rawBottom > 200) {
+                    imeBottom = rawBottom;
+                    sysBottom = 0;
+                } else {
+                    sysBottom = rawBottom;
+                    imeBottom = 0;
+                }
+            }
+
+            boolean imeVisible = imeBottom > sysBottom && imeBottom > 0;
+
+            if (topTarget == bottomTarget) {
+                int targetBottom = imeVisible ? imeBottom : sysBottom;
+                topTarget.setPadding(
+                        topTarget.getPaddingLeft(),
+                        baseTop + top,
+                        topTarget.getPaddingRight(),
+                        baseBottom + targetBottom);
+            } else {
+                topTarget.setPadding(
+                        topTarget.getPaddingLeft(),
+                        baseTop + top,
+                        topTarget.getPaddingRight(),
+                        imeVisible ? imeBottom : outerBaseBottom);
+                if (imeVisible) {
+                    bottomTarget.setVisibility(View.GONE);
+                } else {
+                    bottomTarget.setVisibility(View.VISIBLE);
+                    bottomTarget.setPadding(
+                            bottomTarget.getPaddingLeft(),
+                            bottomTarget.getPaddingTop(),
+                            bottomTarget.getPaddingRight(),
+                            baseBottom + sysBottom);
+                }
+            }
             return insets;
         });
         root.requestApplyInsets();
@@ -90,21 +129,5 @@ final class SystemBars {
             vis |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
         }
         decor.setSystemUiVisibility(vis);
-    }
-
-    private static int systemBarTop(WindowInsets insets) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return insets.getInsets(WindowInsets.Type.systemBars()).top;
-        }
-        //noinspection deprecation
-        return insets.getSystemWindowInsetTop();
-    }
-
-    private static int systemBarBottom(WindowInsets insets) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return insets.getInsets(WindowInsets.Type.systemBars()).bottom;
-        }
-        //noinspection deprecation
-        return insets.getSystemWindowInsetBottom();
     }
 }

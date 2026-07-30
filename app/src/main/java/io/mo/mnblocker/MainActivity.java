@@ -873,6 +873,16 @@ public final class MainActivity extends Activity
         return card;
     }
 
+    private void attachFocusScrollListener(View view)
+    {
+        view.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) {
+                v.postDelayed(() -> v.requestRectangleOnScreen(
+                        new android.graphics.Rect(0, 0, v.getWidth(), v.getHeight()), true), 150);
+            }
+        });
+    }
+
     private View rulesCard()
     {
         LinearLayout card = cardLayout();
@@ -887,6 +897,7 @@ public final class MainActivity extends Activity
         rulesInput.setHintTextColor(0xFFB0B6C3);
         rulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         rulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+        attachFocusScrollListener(rulesInput);
         // matcher() no longer re-reads this field on every call, so the edits have
         // to announce themselves.
         rulesInput.addTextChangedListener(new TextWatcher()
@@ -944,6 +955,7 @@ public final class MainActivity extends Activity
         contentRulesInput.setHintTextColor(0xFFB0B6C3);
         contentRulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         contentRulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+        attachFocusScrollListener(contentRulesInput);
 
         LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -973,6 +985,7 @@ public final class MainActivity extends Activity
         searchQueryInput.setSingleLine(true);
         searchQueryInput.setPadding(dp(12), dp(10), dp(12), dp(10));
         searchQueryInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+        attachFocusScrollListener(searchQueryInput);
         searchQueryInput.addTextChangedListener(new TextWatcher()
         {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}

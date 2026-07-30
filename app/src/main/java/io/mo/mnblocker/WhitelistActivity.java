@@ -151,6 +151,12 @@ public final class WhitelistActivity extends Activity
         allowInput.setHintTextColor(0xFFB0B6C3);
         allowInput.setPadding(dp(12), dp(12), dp(12), dp(12));
         allowInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
+        allowInput.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) {
+                v.postDelayed(() -> v.requestRectangleOnScreen(
+                        new android.graphics.Rect(0, 0, v.getWidth(), v.getHeight()), true), 150);
+            }
+        });
         card.addView(allowInput);
 
         Button save = primaryButton(getString(R.string.action_save_allow));
