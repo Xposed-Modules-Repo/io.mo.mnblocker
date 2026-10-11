@@ -6,6 +6,7 @@ import android.app.NotificationChannelGroup;
 import android.app.NotificationManager;
 import android.os.Bundle;
 import android.os.FileObserver;
+import android.service.notification.StatusBarNotification;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
@@ -46,6 +47,7 @@ final class NotificationHook {
 
     private static final String SYSTEMUI_PKG = "com.android.systemui";
     private static final String SAFE_MODE_FILE_NAME = SafetyManager.FLAG_FILE_NAME;
+    private static final int CLEANUP_PROTECTED_FLAGS = cleanupProtectedFlags();
 
     private final SafetyManager safety;
     private volatile RegexConfig config;
@@ -60,6 +62,8 @@ final class NotificationHook {
     private final ContentStatsStore contentStats = new ContentStatsStore();
     /** Per-app detail of the notifications content blocking dropped (private file). */
     private final ContentBlockLogStore blockLog = new ContentBlockLogStore();
+    private final RootNotificationCleanup notificationCleanup = new RootNotificationCleanup(
+            this::contentCleanupEnabled, this::cleanupExempt);
 
     NotificationHook(SafetyManager safety) {
         this.safety = safety;
@@ -698,6 +702,8 @@ final class NotificationHook {
     private final XC_MethodHook enqueueCallback = new XC_MethodHook() {
         @Override
         protected void beforeHookedMethod(MethodHookParam param) {
+            // Even an allowed/whitelisted update must invalidate an older queued cleanup.
+            notificationCleanup.onEnqueue(param.args);
             if (!safety.hookingAllowed()) {
                 return;
             }
@@ -707,8 +713,8 @@ final class NotificationHook {
             }
             try {
                 cfg.reloadIfChanged();
-                // Double-gated: master switch AND the content-interception toggle.
-                if (!cfg.isMasterEnabled() || !cfg.isContentEnabled()) {
+                // Only the selected root path may perform enqueue-time content interception.
+                if (!cfg.isRootModeActive() || !cfg.isMasterEnabled() || !cfg.isContentEnabled()) {
                     return;
                 }
 
@@ -742,7 +748,10 @@ final class NotificationHook {
                 }
 
                 // Suppress: skip the original enqueue entirely.
-                param.setResult(null);
+                // Newer Android releases also have a boolean-returning enqueue overload.
+                param.setResult(((Method) param.method).getReturnType() == boolean.class
+                        ? Boolean.FALSE : null);
+                notificationCleanup.onBlocked(param.thisObject, param.args, n);
                 String pkg = describeCaller(param.args);
                 contentStats.recordBlock(pkg);
                 blockLog.record(pkg, extractField(n, Notification.EXTRA_TITLE),
@@ -759,7 +768,41 @@ final class NotificationHook {
                 HookLogger.e("enqueueCallback error — passing through untouched", t);
             }
         }
+
+        @Override
+        protected void afterHookedMethod(MethodHookParam param) {
+            notificationCleanup.onEnqueueFinished(param.thisObject);
+        }
     };
+
+    private boolean contentCleanupEnabled() {
+        if (!safety.hookingAllowed()) return false;
+        RegexConfig cfg = config;
+        if (cfg == null) return false;
+        cfg.reloadIfChanged();
+        return cfg.isRootModeActive() && cfg.isMasterEnabled() && cfg.isContentEnabled();
+    }
+
+    private boolean cleanupExempt(StatusBarNotification sbn) {
+        Notification n = sbn.getNotification();
+        // Inspect the stored flags as well: an update may omit the old FGS flag.
+        if ((n.flags & CLEANUP_PROTECTED_FLAGS) != 0) return true;
+        RegexConfig cfg = config;
+        return cfg == null || "io.mo.mnblocker".equals(sbn.getPackageName())
+                || cfg.isAppWhitelisted(sbn.getPackageName())
+                || cfg.contentAllowMatch(extractContentCandidates(n)) != null;
+    }
+
+    private static int cleanupProtectedFlags() {
+        int flags = Notification.FLAG_FOREGROUND_SERVICE | Notification.FLAG_ONGOING_EVENT
+                | Notification.FLAG_NO_CLEAR;
+        try {
+            // Hidden on some SDKs; absent entirely on Android 11.
+            flags |= XposedHelpers.getStaticIntField(Notification.class, "FLAG_USER_INITIATED_JOB");
+        } catch (Throwable ignored) {
+        }
+        return flags;
+    }
 
     private static Notification findNotificationArg(Object[] args) {
         if (args == null) {
