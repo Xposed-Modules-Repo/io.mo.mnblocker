@@ -14,9 +14,29 @@ android {
         versionName "1.2.5"
     }
 
+    // CI signing (.github/workflows/build-release.yml). Only active when the
+    // keystore env vars are set, so a local Android Studio "Generate Signed APK"
+    // and a plain ./gradlew assembleRelease behave exactly as before. The key
+    // itself never lives in the repo — CI decodes it from a secret.
+    def ciKeystore = System.getenv("RELEASE_KEYSTORE_PATH")
+
+    signingConfigs {
+        if (ciKeystore) {
+            release {
+                storeFile file(ciKeystore)
+                storePassword System.getenv("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("RELEASE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
+            if (ciKeystore) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
