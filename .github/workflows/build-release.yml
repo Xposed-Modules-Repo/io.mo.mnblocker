@@ -32,10 +32,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -92,12 +92,20 @@ jobs:
 
       - name: Verify signing certificate
         run: |
+          set -o pipefail
           bt=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
-          actual=$("${bt}apksigner" verify --print-certs "$APK" \
-            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          echo "Signed with: $actual"
-          if [ "$actual" != "$EXPECTED_CERT_SHA256" ]; then
-            echo "::error::APK is not signed with the release certificate (expected $EXPECTED_CERT_SHA256). Users could not update over the existing install."
+          echo "apksigner: ${bt}apksigner"
+          out=$("${bt}apksigner" verify --print-certs "$APK")
+          echo "$out"
+          # Match any "... certificate SHA-256 digest:" line: older apksigner
+          # prints "Signer #1 ...", newer ones "Signer (minSdkVersion=..) ...".
+          # Exactly one distinct digest, and it must be the release one.
+          digests=$(printf '%s\n' "$out" \
+            | sed -n 's/.*certificate SHA-256 digest: *\([0-9A-Fa-f:]*\).*/\1/p' \
+            | tr -d ':' | tr 'A-F' 'a-f' | sort -u)
+          echo "Signed with: ${digests:-<none found>}"
+          if [ "$digests" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::APK is not signed with exactly the release certificate (expected $EXPECTED_CERT_SHA256). Users could not update over the existing install."
             exit 1
           fi
 
