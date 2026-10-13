@@ -7,9 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -18,27 +16,20 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
 public final class AboutActivity extends Activity
 {
-    private static final int COLOR_BG = 0xFFF6F7FB;
-    private static final int COLOR_CARD = 0xFFFFFFFF;
-    private static final int COLOR_TEXT = 0xFF172033;
-    private static final int COLOR_SUB = 0xFF6D7484;
-    private static final int COLOR_LINE = 0xFFE7EAF0;
-    private static final int COLOR_LINK = 0xFF254FD8;
-    private static final int COLOR_PRIMARY = 0xFF3F6DF6;
-    private static final int COLOR_WARN_BG = 0xFFFFF5DD;
-    private static final int COLOR_WARN_TEXT = 0xFF9A5B00;
     /** Popup width; also the offset that right-aligns it with its row. */
     private static final int POPUP_WIDTH_DP = 200;
+    private static final int POPUP_ELEVATION_DP = 8;
+    private static final int APP_ICON_DP = 88;
     private static final String SOURCE_URL = "https://github.com/lm060719/io.mo.mnblocker";
 
     /** Hidden debug entrance: tap the icon or name 5 times. */
     private int tapCount;
     private long lastTapTime;
+    private Ui ui;
 
     @Override
     protected void attachBaseContext(Context newBase)
@@ -50,63 +41,43 @@ public final class AboutActivity extends Activity
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
+        ui = new Ui(this);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(COLOR_BG);
+        Ui.Page page = ui.page();
+        LinearLayout root = page.content;
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(26), dp(16), dp(20));
-        scroll.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
+        root.addView(ui.topBar("", null, null));
         root.addView(appInfoBlock());
+        root.addView(ui.sectionLabel(getString(R.string.about_settings_label)));
         root.addView(settingsCard());
         root.addView(sourceCard());
 
-        setContentView(scroll);
-        SystemBars.edgeToEdge(this, scroll, root, root);
+        setContentView(page.scroll);
+        SystemBars.edgeToEdge(this, page.scroll, root, root);
     }
 
     private View appInfoBlock()
     {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout box = ui.column();
         box.setGravity(Gravity.CENTER_HORIZONTAL);
-        box.setPadding(0, dp(10), 0, dp(22));
+        box.setPadding(0, 0, 0, ui.dp(Ui.S6));
 
         ImageView icon = new ImageView(this);
         icon.setImageResource(R.drawable.app_icon);
         icon.setContentDescription(getString(R.string.app_name));
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         icon.setOnClickListener(v -> onSecretTap());
-        box.addView(icon, new LinearLayout.LayoutParams(dp(96), dp(96)));
+        Motion.pressable(icon, Motion.PRESS_SCALE);
+        box.addView(icon, ui.size(APP_ICON_DP, APP_ICON_DP));
 
-        TextView name = new TextView(this);
-        name.setText(getString(R.string.app_name));
-        name.setTextColor(COLOR_TEXT);
-        name.setTextSize(24);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView name = ui.text(getString(R.string.app_name), Ui.Type.HEADLINE, ui.p.onSurface);
         name.setGravity(Gravity.CENTER);
         name.setOnClickListener(v -> onSecretTap());
-        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        nameLp.topMargin = dp(14);
-        box.addView(name, nameLp);
+        box.addView(name, ui.margins(Ui.matchWrap(), 0, Ui.S4, 0, 0));
 
-        TextView version = new TextView(this);
-        version.setText(getString(R.string.about_version_fmt, versionName()));
-        version.setTextColor(COLOR_SUB);
-        version.setTextSize(13);
-        version.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams versionLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        versionLp.topMargin = dp(4);
-        box.addView(version, versionLp);
+        TextView version = ui.chip(getString(R.string.about_version_fmt, versionName()),
+                ui.p.onSurfaceVariant, ui.p.surfaceVariant);
+        box.addView(version, ui.margins(Ui.wrapWrap(), 0, Ui.S2, 0, 0));
 
         return box;
     }
@@ -122,6 +93,7 @@ public final class AboutActivity extends Activity
 
         if (tapCount >= 5) {
             tapCount = 0;
+            Haptics.confirm(getWindow().getDecorView());
             startActivity(new Intent(this, DebugActivity.class));
         }
     }
@@ -140,7 +112,9 @@ public final class AboutActivity extends Activity
      */
     private View settingsCard()
     {
-        LinearLayout card = cardLayout();
+        LinearLayout card = ui.card();
+        card.setPadding(card.getPaddingLeft(), ui.dp(Ui.S2),
+                card.getPaddingRight(), ui.dp(Ui.S2));
         boolean rootFree = isRootFree();
 
         card.addView(pickerRow(
@@ -152,31 +126,24 @@ public final class AboutActivity extends Activity
                 this::onModeSelected));
 
         // Only warn about the trade-offs of the mode actually in use.
-        TextView notice = new TextView(this);
-        notice.setText(getString(R.string.rootfree_limitation_notice));
-        notice.setTextSize(11);
-        notice.setTextColor(COLOR_WARN_TEXT);
-        notice.setBackground(roundBg(COLOR_WARN_BG, dp(10)));
-        notice.setPadding(dp(10), dp(8), dp(10), dp(8));
-        notice.setLineSpacing(dp(2), 1.0f);
-        notice.setVisibility(rootFree ? View.VISIBLE : View.GONE);
-        LinearLayout.LayoutParams noticeLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        noticeLp.topMargin = dp(10);
-        card.addView(notice, noticeLp);
+        if (rootFree)
+        {
+            card.addView(ui.notice(getString(R.string.rootfree_limitation_notice)),
+                    ui.margins(Ui.matchWrap(), 0, Ui.S1, 0, Ui.S2));
+        }
 
         // Keep-alive only matters when interception rides on this app's process.
         // The root hook lives in system_server, so the whole page is noise there.
         if (rootFree)
         {
-            card.addView(divider());
-            card.addView(navRow(
+            card.addView(ui.divider());
+            card.addView(ui.navRow(
                     getString(R.string.perm_entry_title),
                     getString(R.string.perm_entry_desc),
                     v -> startActivity(new Intent(this, PermissionsActivity.class))));
         }
 
-        card.addView(divider());
+        card.addView(ui.divider());
 
         String lang = LocaleManager.getLanguage(this);
         card.addView(pickerRow(
@@ -189,49 +156,6 @@ public final class AboutActivity extends Activity
         return card;
     }
 
-    /** Title + description that opens another screen, with a chevron affordance. */
-    private View navRow(String title, String desc, View.OnClickListener action)
-    {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setClickable(true);
-        row.setPadding(0, dp(4), 0, dp(4));
-
-        LinearLayout text = new LinearLayout(this);
-        text.setOrientation(LinearLayout.VERTICAL);
-
-        TextView t = new TextView(this);
-        t.setText(title);
-        t.setTextColor(COLOR_TEXT);
-        t.setTextSize(17);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        text.addView(t);
-
-        TextView d = new TextView(this);
-        d.setText(desc);
-        d.setTextSize(12);
-        d.setTextColor(COLOR_SUB);
-        d.setPadding(0, dp(4), 0, 0);
-        d.setLineSpacing(dp(2), 1.0f);
-        text.addView(d);
-
-        row.addView(text, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView chevron = new TextView(this);
-        chevron.setText("›");
-        chevron.setTextSize(22);
-        chevron.setTextColor(COLOR_SUB);
-        LinearLayout.LayoutParams chevLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        chevLp.leftMargin = dp(10);
-        row.addView(chevron, chevLp);
-
-        row.setOnClickListener(action);
-        return row;
-    }
-
     /**
      * One dropdown row. {@code values} are the stored representations and
      * {@code labels} their display text, index-aligned; {@code current} is
@@ -241,42 +165,23 @@ public final class AboutActivity extends Activity
     private View pickerRow(String title, String[] labels, String[] values,
                            String current, PickListener listener)
     {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout row = ui.row();
+        row.setMinimumHeight(ui.dp(Ui.ROW_MIN));
+        row.setPadding(0, ui.dp(Ui.S2), 0, ui.dp(Ui.S2));
+
+        row.addView(ui.text(title, Ui.Type.TITLE_SMALL, ui.p.onSurface), Ui.fillRow());
+
+        TextView value = ui.text(labelFor(labels, values, current),
+                Ui.Type.BODY, ui.p.onSurfaceVariant);
+        row.addView(value, ui.margins(Ui.wrapWrap(), Ui.S3, 0, 0, 0));
+
+        // "Opens a list" affordance.
+        row.addView(ui.icon(R.drawable.ic_unfold, ui.p.onSurfaceVariant),
+                ui.margins(ui.size(Ui.ICON_SMALL, Ui.ICON_SMALL), Ui.S1, 0, 0, 0));
+
+        row.setBackground(ui.ripple(ui.shape(Color.TRANSPARENT, Ui.R_SMALL), Ui.R_SMALL));
         row.setClickable(true);
-        row.setPadding(0, dp(6), 0, dp(6));
-
-        TextView t = new TextView(this);
-        t.setText(title);
-        t.setTextColor(COLOR_TEXT);
-        t.setTextSize(17);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        row.addView(t, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView value = new TextView(this);
-        value.setText(labelFor(labels, values, current));
-        value.setTextSize(14);
-        value.setTextColor(COLOR_SUB);
-        LinearLayout.LayoutParams valueLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        valueLp.leftMargin = dp(12);
-        row.addView(value, valueLp);
-
-        // Stacked arrowheads, matching the "opens a list" affordance. Text rather
-        // than a drawable, like the ‹ back arrows elsewhere in this app.
-        TextView chevron = new TextView(this);
-        chevron.setText("⌃\n⌄");
-        chevron.setTextSize(9);
-        chevron.setTextColor(COLOR_SUB);
-        chevron.setGravity(Gravity.CENTER);
-        chevron.setLineSpacing(0, 0.9f);
-        LinearLayout.LayoutParams chevLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        chevLp.leftMargin = dp(6);
-        row.addView(chevron, chevLp);
-
+        row.setContentDescription(title + ", " + value.getText());
         row.setOnClickListener(v -> showPicker(v, labels, values, current, listener));
         return row;
     }
@@ -297,68 +202,54 @@ public final class AboutActivity extends Activity
     private void showPicker(View anchor, String[] labels, String[] values,
                             String current, PickListener listener)
     {
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(0, dp(6), 0, dp(6));
-        content.setBackground(roundBg(COLOR_CARD, dp(18)));
+        LinearLayout content = ui.column();
+        content.setPadding(0, ui.dp(Ui.S2), 0, ui.dp(Ui.S2));
+        content.setBackground(ui.shape(ui.p.surfaceHigh, Ui.R_MEDIUM));
 
         final PopupWindow popup = new PopupWindow(content,
-                dp(POPUP_WIDTH_DP), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+                ui.dp(POPUP_WIDTH_DP), ViewGroup.LayoutParams.WRAP_CONTENT, true);
         // A non-null background is what makes outside taps dismiss the popup.
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         popup.setOutsideTouchable(true);
-        popup.setElevation(dp(10));
+        popup.setElevation(ui.dp(POPUP_ELEVATION_DP));
 
         for (int i = 0; i < labels.length; i++)
         {
             final String value = values[i];
             boolean selected = value.equals(current);
 
-            LinearLayout item = new LinearLayout(this);
-            item.setOrientation(LinearLayout.HORIZONTAL);
-            item.setGravity(Gravity.CENTER_VERTICAL);
+            LinearLayout item = ui.row();
+            item.setMinimumHeight(ui.dp(Ui.TOUCH));
+            item.setPadding(ui.dp(Ui.S4), ui.dp(Ui.S3), ui.dp(Ui.S4), ui.dp(Ui.S3));
+            item.setBackground(ui.ripple(ui.shape(Color.TRANSPARENT, Ui.R_SMALL), Ui.R_SMALL));
             item.setClickable(true);
-            item.setPadding(dp(18), dp(14), dp(18), dp(14));
 
-            TextView label = new TextView(this);
-            label.setText(labels[i]);
-            label.setTextSize(16);
-            label.setTextColor(selected ? COLOR_PRIMARY : COLOR_TEXT);
-            item.addView(label, new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView label = ui.text(labels[i], Ui.Type.BODY,
+                    selected ? ui.p.primary : ui.p.onSurface);
+            if (selected)
+            {
+                label.setTypeface(Ui.typeface(Ui.Weight.MEDIUM));
+            }
+            item.addView(label, Ui.fillRow());
 
             if (selected)
             {
-                TextView tick = new TextView(this);
-                tick.setText("✓");
-                tick.setTextSize(16);
-                tick.setTextColor(COLOR_PRIMARY);
-                item.addView(tick);
+                item.addView(ui.icon(R.drawable.ic_check, ui.p.primary),
+                        ui.size(Ui.ICON_SMALL, Ui.ICON_SMALL));
             }
 
             item.setOnClickListener(v ->
             {
+                Haptics.tick(v);
                 popup.dismiss();
                 listener.onPick(value);
             });
-            content.addView(item, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            content.addView(item, Ui.matchWrap());
         }
 
         // Right-aligned with the row, so it drops out of the value it replaces.
-        popup.showAsDropDown(anchor, anchor.getWidth() - dp(POPUP_WIDTH_DP), dp(2));
-    }
-
-    private View divider()
-    {
-        View line = new View(this);
-        line.setBackgroundColor(COLOR_LINE);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1) / 2));
-        lp.topMargin = dp(14);
-        lp.bottomMargin = dp(14);
-        line.setLayoutParams(lp);
-        return line;
+        popup.showAsDropDown(anchor, anchor.getWidth() - ui.dp(POPUP_WIDTH_DP),
+                ui.dp(Ui.S_HALF));
     }
 
     private boolean isRootFree()
@@ -375,7 +266,7 @@ public final class AboutActivity extends Activity
      * editors — this activity has no views to read, and the saved state is the
      * right thing to mirror anyway.
      *
-     * Recreates the screen so the buttons restyle; MainActivity re-routes its own
+     * Recreates the screen so the rows restyle; MainActivity re-routes its own
      * data path when it next resumes.
      */
     private void onModeSelected(String mode)
@@ -427,29 +318,11 @@ public final class AboutActivity extends Activity
 
     private View sourceCard()
     {
-        LinearLayout card = cardLayout();
-
-        TextView title = new TextView(this);
-        title.setText(getString(R.string.about_source_title));
-        title.setTextColor(COLOR_TEXT);
-        title.setTextSize(17);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        card.addView(title);
-
-        TextView source = new TextView(this);
-        source.setText(SOURCE_URL);
-        source.setTextColor(COLOR_LINK);
-        source.setTextSize(13);
-        source.setTextIsSelectable(true);
-        source.setOnClickListener(v -> startActivity(new Intent(
-                Intent.ACTION_VIEW,
-                Uri.parse(SOURCE_URL))));
-        LinearLayout.LayoutParams sourceLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        sourceLp.topMargin = dp(8);
-        card.addView(source, sourceLp);
-
+        LinearLayout card = ui.card();
+        card.setPadding(card.getPaddingLeft(), ui.dp(Ui.S2),
+                card.getPaddingRight(), ui.dp(Ui.S2));
+        card.addView(ui.navRow(getString(R.string.about_source_title), SOURCE_URL,
+                v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_URL)))));
         return card;
     }
 
@@ -467,34 +340,5 @@ public final class AboutActivity extends Activity
         {
         }
         return "";
-    }
-
-    private LinearLayout cardLayout()
-    {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(roundBg(COLOR_CARD, dp(22)));
-        card.setElevation(dp(2));
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(14);
-        card.setLayoutParams(lp);
-        return card;
-    }
-
-    private GradientDrawable roundBg(int color, int radius)
-    {
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(color);
-        gd.setCornerRadius(radius);
-        return gd;
-    }
-
-    private int dp(int v)
-    {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 }

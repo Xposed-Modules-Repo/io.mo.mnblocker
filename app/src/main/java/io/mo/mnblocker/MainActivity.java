@@ -5,12 +5,8 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
+import android.content.res.ColorStateList;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
@@ -18,17 +14,16 @@ import android.text.format.DateUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.FrameLayout;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import org.json.JSONObject;
 
@@ -45,9 +40,11 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Configuration UI.
+ * Configuration UI: home (status + rules), stats, and the detected-channel list,
+ * under a bottom tab bar.
  *
- * Modernized programmatic layout.
+ * Built from {@link Ui} (tokens + components), animated with {@link Motion}
+ * springs. All logic below the view builders is unchanged by the UI layer.
  */
 public final class MainActivity extends Activity
 {
@@ -60,23 +57,21 @@ public final class MainActivity extends Activity
     private static final int TAB_STATS = 1;
     private static final int TAB_MATCHED = 2;
 
-    /** Page crossfade timings and travel — see {@link Springs}. */
-    private static final long PAGE_IN_MS = 200;
-    private static final long PAGE_OUT_MS = 180;
-    private static final long TINT_MS = 180;
+    /** How far a page travels sideways during a tab switch. */
+    private static final int PAGE_SHIFT_DP = Ui.S6;
+    /** M3 navigation-bar active indicator. */
+    private static final int INDICATOR_W_DP = 64;
+    private static final int INDICATOR_H_DP = 32;
+    private static final int STATUS_DOT_DP = 8;
+    private static final int STAT_TILE_DP = 96;
+    private static final int RANK_BADGE_DP = 28;
+    /** Ranks drawn with the accent badge. */
+    private static final int PODIUM = 3;
+    /** Skeleton rows shown until the first channel / stats load lands. */
+    private static final int SKELETON_ROWS = 4;
+    private static final long JUMP_HIGHLIGHT_MS = 1500;
 
-    private static final int COLOR_BG = 0xFFF6F7FB;
-    private static final int COLOR_CARD = 0xFFFFFFFF;
-    private static final int COLOR_TEXT = 0xFF172033;
-    private static final int COLOR_SUB = 0xFF6D7484;
-    private static final int COLOR_LINE = 0xFFE7EAF0;
-    private static final int COLOR_PRIMARY = 0xFF3F6DF6;
-    private static final int COLOR_PRIMARY_DARK = 0xFF254FD8;
-    private static final int COLOR_DANGER = 0xFFC62828;
-    private static final int COLOR_SUCCESS = 0xFF2E7D32;
-    private static final int COLOR_WARN_BG = 0xFFFFF5DD;
-    private static final int COLOR_WARN_TEXT = 0xFF9A5B00;
-
+    private Ui ui;
     private EditText rulesInput;
     private Switch contentEnabledSwitch;
     private EditText contentRulesInput;
@@ -89,6 +84,8 @@ public final class MainActivity extends Activity
      * only fake that with separators.
      */
     private LinearLayout statusBox;
+    private SmoothCornerDrawable statusBg;
+    private TextView heroModeChip;
     private View statusDot;
     private View statusDivider;
     private TextView statusState;
@@ -112,7 +109,7 @@ public final class MainActivity extends Activity
     private EditText searchQueryInput;
     private Switch onlyMatchedSwitch;
     private LinearLayout listContainer;
-    private Button sortButton;
+    private Ui.Segmented sortSelector;
     private Button multiSelectButton;
     private Button selectAllButton;
 
@@ -124,6 +121,9 @@ public final class MainActivity extends Activity
     private View pageMatched;
     private TextView[] tabViews;
     private ImageView[] tabIcons;
+    private View[] tabIndicators;
+    /** Per-tab selection progress 0..1 driving indicator, icon tint and label. */
+    private Motion.Spring[] tabSprings;
     private int currentTab = -1;
     private LinearLayout statsTilesContainer;
     private LinearLayout rankingContainer;
@@ -135,6 +135,8 @@ public final class MainActivity extends Activity
     private final Set<String> appWhitelist = new LinkedHashSet<>();
 
     private final List<ChannelRecord> channels = new ArrayList<>();
+    /** False until the first channel load lands — the list shows skeletons till then. */
+    private boolean channelsLoaded;
     private final Map<String, Boolean> overrides = new HashMap<>();
     // Row / header views survive a re-render: renderList() detaches them and
     // re-attaches the same instances rather than inflating fresh trees. Bounded
@@ -181,6 +183,7 @@ public final class MainActivity extends Activity
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
+        ui = new Ui(this);
 
         if (!prefs().contains(RegexConfig.KEY_OPERATING_MODE))
         {
@@ -198,7 +201,7 @@ public final class MainActivity extends Activity
             new Thread(() -> {
                 boolean hasRoot = ShellUtils.fixDirPermissions();
                 if (!hasRoot) {
-                    runOnUiThread(() -> showFadeHint(getString(R.string.main_no_root_hint)));
+                    runOnUiThread(() -> say(getString(R.string.main_no_root_hint), true));
                 }
             }).start();
         }
@@ -207,7 +210,7 @@ public final class MainActivity extends Activity
 
         LinearLayout outer = new LinearLayout(this);
         outer.setOrientation(LinearLayout.VERTICAL);
-        outer.setBackgroundColor(COLOR_BG);
+        outer.setBackgroundColor(ui.p.bg);
 
         contentFrame = new FrameLayout(this);
 
@@ -362,12 +365,13 @@ public final class MainActivity extends Activity
                 int[] scrollLoc = new int[2];
                 scroll.getLocationOnScreen(scrollLoc);
                 int relativeTop = loc[1] - scrollLoc[1] + scroll.getScrollY();
-                scroll.scrollTo(0, Math.max(0, relativeTop - dp(20)));
+                scroll.scrollTo(0, Math.max(0, relativeTop - ui.dp(Ui.S5)));
 
-                Springs.popIcon(viewToScroll);
+                pop(viewToScroll);
                 final android.graphics.drawable.Drawable origBg = viewToScroll.getBackground();
-                viewToScroll.setBackground(roundBg(0xFFDCE6FF, dp(14)));
-                viewToScroll.postDelayed(() -> viewToScroll.setBackground(origBg), 1500);
+                viewToScroll.setBackground(ui.shape(ui.p.primaryContainer, Ui.R_MEDIUM));
+                viewToScroll.postDelayed(() -> viewToScroll.setBackground(origBg),
+                        JUMP_HIGHLIGHT_MS);
             });
         }
     }
@@ -388,178 +392,174 @@ public final class MainActivity extends Activity
 
     private View buildMainPage()
     {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(COLOR_BG);
+        Ui.Page page = ui.page();
+        LinearLayout root = page.content;
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(18), dp(16), dp(20));
-        scroll.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        ImageView about = ui.iconButton(R.drawable.ic_about, ui.p.onSurfaceVariant,
+                getString(R.string.nav_about),
+                v -> startActivity(new Intent(this, AboutActivity.class)));
+        root.addView(ui.largeTitle(getString(R.string.app_name), null, about));
 
         root.addView(heroCard());
         root.addView(globalCard());
         root.addView(whitelistEntryCard());
         root.addView(rulesCard());
         root.addView(mainActionRow());
-        return scroll;
+        return page.scroll;
     }
 
     /** Tappable entry that opens the dedicated whitelist settings screen. */
     private View whitelistEntryCard()
     {
-        LinearLayout card = cardLayout();
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setOrientation(LinearLayout.HORIZONTAL);
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setClickable(true);
-        card.setOnClickListener(v ->
-                startActivity(new Intent(this, WhitelistActivity.class)));
-
-        LinearLayout text = new LinearLayout(this);
-        text.setOrientation(LinearLayout.VERTICAL);
-        text.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView title = new TextView(this);
-        title.setText(getString(R.string.whitelist_title));
-        title.setTextSize(17);
-        title.setTextColor(COLOR_TEXT);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        text.addView(title);
-
-        TextView desc = new TextView(this);
-        desc.setText(getString(R.string.whitelist_entry_desc));
-        desc.setTextSize(12);
-        desc.setTextColor(COLOR_SUB);
-        desc.setPadding(0, dp(4), 0, 0);
-        text.addView(desc);
-        card.addView(text);
-
-        TextView arrow = new TextView(this);
-        arrow.setText("›");
-        arrow.setTextSize(24);
-        arrow.setTextColor(COLOR_SUB);
-        arrow.setPadding(dp(10), 0, dp(4), 0);
-        card.addView(arrow);
+        LinearLayout card = ui.card();
+        card.setPadding(card.getPaddingLeft(), ui.dp(Ui.S2),
+                card.getPaddingRight(), ui.dp(Ui.S2));
+        card.addView(ui.navRow(getString(R.string.whitelist_title),
+                getString(R.string.whitelist_entry_desc),
+                v -> startActivity(new Intent(this, WhitelistActivity.class))));
         return card;
     }
 
     private View buildMatchedPage()
     {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(COLOR_BG);
+        Ui.Page page = ui.page();
+        LinearLayout root = page.content;
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(18), dp(16), dp(20));
-        scroll.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        ImageView refresh = ui.iconButton(R.drawable.ic_refresh, ui.p.onSurfaceVariant,
+                getString(R.string.action_refresh), v ->
+                {
+                    reloadChannelsAndOverrides();
+                    renderList();
+                    say(getString(R.string.toast_refreshed), false);
+                });
+        root.addView(ui.largeTitle(getString(R.string.tab_matched),
+                getString(R.string.channel_card_title), refresh));
 
-        root.addView(channelCard());
-        return scroll;
+        root.addView(filterCard());
+        root.addView(batchCard());
+
+        listHeader = ui.sectionLabel("");
+        root.addView(listHeader);
+
+        listContainer = ui.column();
+        root.addView(listContainer, Ui.matchWrap());
+        return page.scroll;
     }
 
     private View buildStatsPage()
     {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(COLOR_BG);
+        Ui.Page page = ui.page();
+        LinearLayout root = page.content;
+        root.addView(ui.largeTitle(getString(R.string.stats_title), null, null));
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(18), dp(16), dp(20));
-        scroll.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        // Skeletons until the counters (su-backed in root mode) arrive.
+        statsTilesContainer = ui.column();
+        statsTilesContainer.addView(tileRow(ui.skeletonBlock(STAT_TILE_DP),
+                ui.skeletonBlock(STAT_TILE_DP)));
+        statsTilesContainer.addView(tileRow(ui.skeletonBlock(STAT_TILE_DP),
+                ui.skeletonBlock(STAT_TILE_DP)));
+        root.addView(statsTilesContainer);
 
-        LinearLayout tilesCard = cardLayout();
-        tilesCard.addView(sectionTitle(getString(R.string.stats_title), null));
-        statsTilesContainer = new LinearLayout(this);
-        statsTilesContainer.setOrientation(LinearLayout.VERTICAL);
-        tilesCard.addView(statsTilesContainer);
-        root.addView(tilesCard);
-
-        LinearLayout rankCard = cardLayout();
-        rankCard.addView(sectionTitle(getString(R.string.stats_ranking_title), null));
-        rankingContainer = new LinearLayout(this);
-        rankingContainer.setOrientation(LinearLayout.VERTICAL);
+        root.addView(ui.sectionLabel(getString(R.string.stats_ranking_title)));
+        LinearLayout rankCard = ui.card();
+        rankCard.setPadding(ui.dp(Ui.S2), ui.dp(Ui.S2), ui.dp(Ui.S2), ui.dp(Ui.S2));
+        rankingContainer = ui.column();
+        for (int i = 0; i < SKELETON_ROWS; i++)
+        {
+            rankingContainer.addView(ui.skeletonRow());
+        }
         rankCard.addView(rankingContainer);
         root.addView(rankCard);
 
-        Button clear = softButton(getString(R.string.action_clear_count));
+        Button clear = ui.button(Ui.BTN_DANGER, getString(R.string.action_clear_count));
         clear.setOnClickListener(v -> onResetContentStats());
-        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        clp.topMargin = dp(2);
-        root.addView(clear, clp);
-        return scroll;
+        root.addView(clear, Ui.matchWrap());
+        return page.scroll;
     }
 
     private View mainActionRow()
     {
-        LinearLayout row = rowLayout();
-
-        Button save = primaryButton(getString(R.string.action_save_rules));
+        Button save = ui.button(Ui.BTN_PRIMARY, getString(R.string.action_save_rules));
         save.setOnClickListener(v -> onSaveRules());
-        row.addView(save, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
-
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(2);
-        row.setLayoutParams(rowLp);
-        return row;
+        save.setLayoutParams(ui.margins(Ui.matchWrap(), 0, Ui.S1, 0, 0));
+        return save;
     }
 
+    /**
+     * M3-style navigation bar: each tab is an icon inside a pill indicator over a
+     * label. Selection is a 0..1 spring per tab driving the indicator's width and
+     * opacity and the icon / label colours together, so a quick re-tap redirects
+     * the motion instead of waiting for it.
+     */
     private View buildTabBar()
     {
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setBackgroundColor(COLOR_CARD);
-        bar.setPadding(dp(6), dp(6), dp(6), dp(6));
-        bar.setElevation(dp(10));
+        LinearLayout bar = ui.column();
+        bar.setBackgroundColor(ui.p.surface);
+
+        View hairline = new View(this);
+        hairline.setBackgroundColor(ui.p.outlineVariant);
+        bar.addView(hairline, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, ui.dp(1) / 2)));
+
+        LinearLayout tabs = ui.row();
+        tabs.setPadding(ui.dp(Ui.S2), ui.dp(Ui.S3), ui.dp(Ui.S2), ui.dp(Ui.S3));
+        bar.addView(tabs, Ui.matchWrap());
 
         String[] labels = {getString(R.string.tab_home), getString(R.string.stats_title),
                 getString(R.string.tab_matched)};
         int[] icons = {R.drawable.ic_tab_home, R.drawable.ic_tab_stats, R.drawable.ic_tab_matched};
-        tabViews = new TextView[labels.length];
-        tabIcons = new ImageView[labels.length];
-        for (int i = 0; i < labels.length; i++)
+        int n = labels.length;
+        tabViews = new TextView[n];
+        tabIcons = new ImageView[n];
+        tabIndicators = new View[n];
+        tabSprings = new Motion.Spring[n];
+        for (int i = 0; i < n; i++)
         {
             final int idx = i;
 
-            LinearLayout tab = new LinearLayout(this);
-            tab.setOrientation(LinearLayout.VERTICAL);
-            tab.setGravity(Gravity.CENTER);
-            tab.setPadding(dp(4), dp(8), dp(4), dp(6));
+            LinearLayout tab = ui.column();
+            tab.setGravity(Gravity.CENTER_HORIZONTAL);
+            tab.setMinimumHeight(ui.dp(Ui.TOUCH));
+            tab.setClickable(true);
+            tab.setContentDescription(labels[i]);
             tab.setOnClickListener(v -> showTab(idx));
-            // Draws only; returns false so the click listener above still fires.
-            tab.setOnTouchListener(Springs.pressFeedback(tab));
 
-            ImageView icon = new ImageView(this);
-            icon.setImageResource(icons[i]);
-            tab.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+            FrameLayout iconWrap = new FrameLayout(this);
+            View indicator = new View(this);
+            indicator.setBackground(ui.pill(ui.p.primaryContainer));
+            iconWrap.addView(indicator, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            ImageView icon = ui.icon(icons[i], ui.p.onSurfaceVariant);
+            iconWrap.addView(icon, new FrameLayout.LayoutParams(
+                    ui.dp(Ui.ICON), ui.dp(Ui.ICON), Gravity.CENTER));
+            tab.addView(iconWrap, ui.size(INDICATOR_W_DP, INDICATOR_H_DP));
 
-            TextView t = new TextView(this);
-            t.setText(labels[i]);
+            TextView t = ui.text(labels[i], Ui.Type.CAPTION, ui.p.onSurfaceVariant);
+            t.setTypeface(Ui.typeface(Ui.Weight.MEDIUM));
             t.setGravity(Gravity.CENTER);
-            t.setTextSize(11);
-            t.setTypeface(Typeface.DEFAULT_BOLD);
-            t.setPadding(0, dp(4), 0, 0);
-            tab.addView(t);
+            tab.addView(t, ui.margins(Ui.wrapWrap(), 0, Ui.S1, 0, 0));
+
+            // The whole tab takes the touch; only the icon pill dips.
+            Motion.pressable(tab, iconWrap, Motion.PRESS_SCALE);
 
             tabIcons[i] = icon;
             tabViews[i] = t;
-            bar.addView(tab, new LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            tabIndicators[i] = indicator;
+            tabSprings[i] = new Motion.Spring(0f, 0.002f, v -> paintTab(idx, v));
+            tabs.addView(tab, Ui.fillRow());
         }
         return bar;
+    }
+
+    /** Draw tab {@code i} at selection progress {@code v} (may overshoot 1 briefly). */
+    private void paintTab(int i, float v)
+    {
+        float c = Math.max(0f, Math.min(1f, v));
+        tabIndicators[i].setAlpha(c);
+        tabIndicators[i].setScaleX(0.5f + 0.5f * Math.max(0f, v));
+        tabIcons[i].setImageTintList(ColorStateList.valueOf(
+                Palette.blend(ui.p.onSurfaceVariant, ui.p.onPrimaryContainer, c)));
+        tabViews[i].setTextColor(Palette.blend(ui.p.onSurfaceVariant, ui.p.onSurface, c));
     }
 
     /** The page for a tab, or {@code null} if it has not been built yet. */
@@ -599,77 +599,96 @@ public final class MainActivity extends Activity
         return builtPage(i);
     }
 
-    /** Select a tab with no transition — first layout and rotation restore. */
+    /** Select a tab with no transition — first layout, rotation restore, jumps. */
     private void setTabImmediate(int i)
     {
-        View to = pageFor(i);
-        settlePages(null, to);
-        to.setVisibility(View.VISIBLE);
-        to.setAlpha(1f);
-        to.setTranslationX(0f);
+        pageFor(i);
+        for (int k = TAB_MAIN; k <= TAB_MATCHED; k++)
+        {
+            View p = builtPage(k);
+            if (p == null)
+            {
+                continue;
+            }
+            // set() also stops any spring mid-flight and drops its end action, so
+            // an interrupted fade-out can no longer hide the page afterwards.
+            Motion.set(p, View.ALPHA, 1f);
+            Motion.set(p, View.TRANSLATION_X, 0f);
+            p.setLayerType(View.LAYER_TYPE_NONE, null);
+            p.setVisibility(k == i ? View.VISIBLE : View.GONE);
+        }
 
         applyTabColors(i, false);
         currentTab = i;
         onTabSettled(i); // no transition to stay out of the way of
     }
 
+    /**
+     * Switch tabs with a spring crossfade + slide. Every page property is driven
+     * by a per-view spring, so tapping another tab mid-transition retargets the
+     * motion from where it is (velocity included) rather than snapping or
+     * queueing — the old tween version had to cancel and reset pages instead.
+     */
     private void showTab(int i)
     {
         if (i == currentTab)
         {
-            popTabIcon(i); // re-tapping the active tab still acknowledges the touch
-            return;
+            return; // the press dip already acknowledged the touch
         }
+        Haptics.tick(tabViews[i]);
 
-        final View from = builtPage(currentTab);
-        View to = pageFor(i);
-
-        if (from == null || from == to)
+        View from = builtPage(currentTab);
+        pageFor(i);
+        if (from == null || Motion.reduced(this))
         {
             setTabImmediate(i);
-            popTabIcon(i);
             return;
         }
-
-        settlePages(from, to);
 
         // Travel direction follows the tab order, so the pages feel laid out
         // side by side rather than stacked.
-        int dx = dp(16) * (i > currentTab ? 1 : -1);
-
+        final float dx = ui.dp(PAGE_SHIFT_DP) * (i > currentTab ? 1 : -1);
         final int target = i;
 
-        // withLayer(): fading a whole ScrollView subtree without promoting it to a
-        // hardware layer re-renders every child each frame, which is most of what
-        // made rapid tab taps stutter.
-        to.setVisibility(View.VISIBLE);
-        to.setAlpha(0f);
-        to.setTranslationX(dx);
-        to.animate()
-                .alpha(1f)
-                .translationX(0f)
-                .setDuration(PAGE_IN_MS)
-                .setInterpolator(Springs.EASE_OUT)
-                .withLayer()
-                .withEndAction(() -> onTabSettled(target))
-                .start();
-
-        from.animate()
-                .alpha(0f)
-                .translationX(-dx)
-                .setDuration(PAGE_OUT_MS)
-                .setInterpolator(Springs.EASE_OUT)
-                .withLayer()
-                .withEndAction(() ->
+        for (int k = TAB_MAIN; k <= TAB_MATCHED; k++)
+        {
+            final View p = builtPage(k);
+            if (p == null)
+            {
+                continue;
+            }
+            if (k == i)
+            {
+                if (p.getVisibility() != View.VISIBLE)
                 {
-                    from.setVisibility(View.GONE);
-                    from.setAlpha(1f);
-                    from.setTranslationX(0f);
-                })
-                .start();
+                    Motion.set(p, View.ALPHA, 0f);
+                    Motion.set(p, View.TRANSLATION_X, dx);
+                    p.setVisibility(View.VISIBLE);
+                }
+                // Hardware layer while moving: fading a whole ScrollView subtree
+                // without one re-renders every child each frame (7 ms -> 27 ms p90).
+                p.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                Motion.animate(p, View.TRANSLATION_X, 0f, Motion.STANDARD);
+                Motion.animate(p, View.ALPHA, 1f, Motion.STANDARD, () ->
+                {
+                    p.setLayerType(View.LAYER_TYPE_NONE, null);
+                    onTabSettled(target);
+                });
+            }
+            else if (p.getVisibility() == View.VISIBLE)
+            {
+                p.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+                Motion.animate(p, View.TRANSLATION_X, -dx, Motion.STANDARD);
+                Motion.animate(p, View.ALPHA, 0f, Motion.STANDARD, () ->
+                {
+                    p.setVisibility(View.GONE);
+                    p.setLayerType(View.LAYER_TYPE_NONE, null);
+                    Motion.set(p, View.TRANSLATION_X, 0f);
+                });
+            }
+        }
 
-        applyTabColors(i, true); // reads currentTab as the previous index
-        popTabIcon(i);
+        applyTabColors(i, true);
         currentTab = i;
     }
 
@@ -678,7 +697,7 @@ public final class MainActivity extends Activity
      *
      * Refreshing the stats page rebuilds its tiles and the whole app ranking. Doing
      * that while the pages are still animating meant every tap paid for a view
-     * rebuild during the transition's own frames. If a transition is cancelled by
+     * rebuild during the transition's own frames. If a transition is redirected by
      * another tap this never runs — but the tap that finally settles will run it.
      */
     private void onTabSettled(int i)
@@ -689,131 +708,58 @@ public final class MainActivity extends Activity
         }
     }
 
-    /**
-     * Cancel any in-flight page animation and settle every page that is neither
-     * leaving nor entering.
-     *
-     * withEndAction does NOT run when an animation is cancelled, so a page that
-     * gets interrupted mid-fade — which is exactly what rapid tab tapping does —
-     * would otherwise stay half-transparent and stuck on top of the new page.
-     */
-    private void settlePages(View from, View to)
-    {
-        for (int k = TAB_MAIN; k <= TAB_MATCHED; k++)
-        {
-            View p = builtPage(k);
-            if (p == null)
-            {
-                continue;
-            }
-            p.animate().cancel();
-            if (p != from && p != to)
-            {
-                p.setVisibility(View.GONE);
-                p.setAlpha(1f);
-                p.setTranslationX(0f);
-            }
-        }
-    }
-
-    private void popTabIcon(int i)
-    {
-        if (tabIcons != null && i >= 0 && i < tabIcons.length)
-        {
-            Springs.popIcon(tabIcons[i]);
-        }
-    }
-
-    /** Move the selected tint to tab {@code i}, crossfading when animating. */
+    /** Move the selection to tab {@code i}, springing when animating. */
     private void applyTabColors(int i, boolean animate)
     {
-        if (tabViews == null || tabIcons == null)
+        if (tabSprings == null)
         {
             return;
         }
-        for (int k = 0; k < tabViews.length; k++)
+        boolean motion = animate && !Motion.reduced(this);
+        for (int k = 0; k < tabSprings.length; k++)
         {
-            int to = (k == i) ? COLOR_PRIMARY : COLOR_SUB;
-            if (!animate)
+            float target = k == i ? 1f : 0f;
+            ((View) tabViews[k].getParent()).setSelected(k == i);
+            if (motion)
             {
-                tabIcons[k].setColorFilter(to);
-                tabViews[k].setTextColor(to);
-                continue;
+                tabSprings[k].animateTo(target, Motion.MICRO, null);
             }
-            int from = (k == currentTab) ? COLOR_PRIMARY : COLOR_SUB;
-            if (from != to)
+            else
             {
-                Springs.tint(tabIcons[k], tabViews[k], from, to, TINT_MS);
+                tabSprings[k].snapTo(target);
             }
         }
     }
 
+    /**
+     * The hero: mode badge, one-line pitch, and the live status readout. Tonal
+     * (primary container), so it leads the page without shouting in dark mode
+     * the way a filled primary block would.
+     */
     private View heroCard()
     {
-        LinearLayout card = cardLayout();
-        card.setBackground(roundBg(COLOR_PRIMARY, dp(22)));
-        card.setPadding(dp(18), dp(18), dp(18), dp(16));
+        LinearLayout card = ui.card(ui.p.primaryContainer);
+        card.setPadding(ui.dp(Ui.S5), ui.dp(Ui.S5), ui.dp(Ui.S5), ui.dp(Ui.S5));
 
-        LinearLayout header = rowLayout();
-        header.setGravity(Gravity.CENTER_VERTICAL);
+        heroModeChip = ui.chip(modeLabel(), ui.p.onPrimary, ui.p.primary);
+        card.addView(heroModeChip, Ui.wrapWrap());
 
-        TextView badge = new TextView(this);
-        badge.setText("LSPosed Module");
-        badge.setTextColor(0xFFEFF3FF);
-        badge.setTextSize(11);
-        badge.setTypeface(Typeface.DEFAULT_BOLD);
-        badge.setGravity(Gravity.CENTER);
-        badge.setPadding(dp(10), dp(4), dp(10), dp(4));
-        badge.setBackground(roundBg(0x33FFFFFF, dp(999)));
-        header.addView(badge, wrapParams());
+        card.addView(ui.text(getString(R.string.hero_desc), Ui.Type.BODY_SMALL,
+                ui.p.onPrimaryContainer), ui.margins(Ui.matchWrap(), 0, Ui.S3, 0, 0));
 
-        View spacer = new View(this);
-        header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        card.addView(statusBox(), ui.margins(Ui.matchWrap(), 0, Ui.S4, 0, 0));
 
-        ImageView appIcon = new ImageView(this);
-        appIcon.setImageResource(R.mipmap.ic_launcher);
-        appIcon.setBackground(roundBg(0x33FFFFFF, dp(999)));
-        appIcon.setContentDescription(getString(R.string.nav_about));
-        appIcon.setPadding(dp(6), dp(6), dp(6), dp(6));
-        appIcon.setOnClickListener(v -> startActivity(new Intent(this, AboutActivity.class)));
-        header.addView(appIcon, new LinearLayout.LayoutParams(dp(46), dp(46)));
-
-        card.addView(header);
-
-        TextView title = new TextView(this);
-        title.setText(getString(R.string.app_name));
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(24);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setPadding(0, dp(12), 0, dp(4));
-        card.addView(title);
-
-        TextView desc = new TextView(this);
-        desc.setText(getString(R.string.hero_desc));
-        desc.setTextColor(0xFFE7ECFF);
-        desc.setTextSize(13);
-        desc.setLineSpacing(dp(2), 1.0f);
-        card.addView(desc);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(14);
-        card.addView(statusBox(), lp);
-
-        clearSafeModeButton = baseButton(getString(R.string.safe_mode_close_button));
-        clearSafeModeButton.setTextColor(Color.WHITE);
-        clearSafeModeButton.setBackground(roundBg(COLOR_WARN_TEXT, dp(14)));
+        clearSafeModeButton = ui.button(Ui.BTN_PRIMARY, getString(R.string.safe_mode_close_button));
         clearSafeModeButton.setVisibility(View.GONE);
         clearSafeModeButton.setOnClickListener(v -> onClearSafeMode());
-
-        LinearLayout.LayoutParams safeLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(46));
-        safeLp.topMargin = dp(10);
-        card.addView(clearSafeModeButton, safeLp);
+        card.addView(clearSafeModeButton, ui.margins(Ui.matchWrap(), 0, Ui.S3, 0, 0));
 
         return card;
+    }
+
+    private String modeLabel()
+    {
+        return getString(rootFree() ? R.string.setup_rootfree_title : R.string.setup_root_title);
     }
 
     private void onClearSafeMode()
@@ -828,15 +774,13 @@ public final class MainActivity extends Activity
                     {
                         if (!ok)
                         {
-                            Toast.makeText(this,
-                                    getString(R.string.safe_mode_clear_failed),
-                                    Toast.LENGTH_LONG).show();
+                            say(getString(R.string.safe_mode_clear_failed), true);
                             return;
                         }
                         safeModeCached = false;
                         refreshStatus();
-                        Toast.makeText(this, getString(R.string.safe_mode_cleared_toast),
-                                Toast.LENGTH_LONG).show();
+                        Haptics.confirm(contentFrame);
+                        say(getString(R.string.safe_mode_cleared_toast), false);
                     });
                 }).start())
                 .setNegativeButton(getString(R.string.action_cancel), null)
@@ -845,59 +789,39 @@ public final class MainActivity extends Activity
 
     private View globalCard()
     {
-        LinearLayout card = cardLayout();
-        card.addView(sectionTitle(getString(R.string.global_switch_title), null));
+        LinearLayout card = ui.card();
+        card.addView(ui.sectionTitle(getString(R.string.global_switch_title), null));
 
-        masterSwitch = cleanSwitch(getString(R.string.switch_master_enable), null);
+        Ui.SwitchRow master = ui.switchRow(getString(R.string.switch_master_enable), null);
+        masterSwitch = master.sw;
         masterSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
-        card.addView(masterSwitch);
+        card.addView(master.view);
 
-        card.addView(divider());
+        card.addView(ui.divider());
 
-        matchDescSwitch = cleanSwitch(getString(R.string.switch_match_desc_title),
+        Ui.SwitchRow desc = ui.switchRow(getString(R.string.switch_match_desc_title),
                 getString(R.string.switch_match_desc_sub));
+        matchDescSwitch = desc.sw;
         matchDescSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
-        card.addView(matchDescSwitch);
+        card.addView(desc.view);
 
         // The mode picker itself lives in AboutActivity — it is a one-off setup
         // choice, not a daily toggle. Only the grant button stays here, because
         // it is operational: it pairs with the status banner above and is what
         // the user needs when root-free mode is on but access is missing.
-        grantAccessButton = softButton(getString(R.string.rootfree_grant_access_button));
+        grantAccessButton = ui.button(Ui.BTN_TONAL, getString(R.string.rootfree_grant_access_button));
         grantAccessButton.setOnClickListener(v -> NotificationAccessUtils.openListenerSettings(this));
-        LinearLayout.LayoutParams grantLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(42));
-        grantLp.topMargin = dp(8);
-        card.addView(grantAccessButton, grantLp);
+        card.addView(grantAccessButton, ui.margins(Ui.matchWrap(), 0, Ui.S2, 0, 0));
 
         return card;
     }
 
-    private void attachFocusScrollListener(View view)
-    {
-        view.setOnFocusChangeListener((v, hasFocus) -> {
-            if (hasFocus) {
-                v.postDelayed(() -> v.requestRectangleOnScreen(
-                        new android.graphics.Rect(0, 0, v.getWidth(), v.getHeight()), true), 150);
-            }
-        });
-    }
-
     private View rulesCard()
     {
-        LinearLayout card = cardLayout();
-        card.addView(sectionTitle(getString(R.string.rules_card_title), null));
+        LinearLayout card = ui.card();
+        card.addView(ui.sectionTitle(getString(R.string.rules_card_title), null));
 
-        rulesInput = new EditText(this);
-        rulesInput.setMinLines(5);
-        rulesInput.setGravity(Gravity.TOP | Gravity.START);
-        rulesInput.setTextSize(13);
-        rulesInput.setTextColor(COLOR_TEXT);
-        rulesInput.setHint(getString(R.string.rules_hint));
-        rulesInput.setHintTextColor(0xFFB0B6C3);
-        rulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
-        rulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
-        attachFocusScrollListener(rulesInput);
+        rulesInput = ui.field(getString(R.string.rules_hint), 5, true);
         // matcher() no longer re-reads this field on every call, so the edits have
         // to announce themselves.
         rulesInput.addTextChangedListener(new TextWatcher()
@@ -914,78 +838,40 @@ public final class MainActivity extends Activity
                 invalidateMatcher();
             }
         });
+        card.addView(rulesInput, Ui.matchWrap());
 
-        LinearLayout.LayoutParams inputLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        inputLp.topMargin = dp(12);
-        card.addView(rulesInput, inputLp);
+        View divider = ui.divider();
+        ((LinearLayout.LayoutParams) divider.getLayoutParams())
+                .setMargins(0, ui.dp(Ui.S4), 0, ui.dp(Ui.S4));
+        card.addView(divider);
 
-        card.addView(divider());
-
-        TextView contentTitle = new TextView(this);
-        contentTitle.setText(getString(R.string.content_section_title));
-        contentTitle.setTextColor(COLOR_TEXT);
-        contentTitle.setTextSize(14);
-        contentTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        contentTitle.setPadding(0, dp(10), 0, dp(2));
-        card.addView(contentTitle);
-
-        TextView contentDesc = new TextView(this);
+        card.addView(ui.text(getString(R.string.content_section_title),
+                Ui.Type.TITLE_SMALL, ui.p.onSurface));
         // Root-free needs no reboot to load a hook — it has none.
-        contentDesc.setText(getString(rootFree()
-                ? R.string.content_section_desc_rootfree
-                : R.string.content_section_desc));
-        contentDesc.setTextColor(COLOR_SUB);
-        contentDesc.setTextSize(12);
-        contentDesc.setPadding(0, 0, 0, dp(2));
-        card.addView(contentDesc);
+        card.addView(ui.text(getString(rootFree()
+                        ? R.string.content_section_desc_rootfree
+                        : R.string.content_section_desc),
+                Ui.Type.BODY_SMALL, ui.p.onSurfaceVariant),
+                ui.margins(Ui.matchWrap(), 0, Ui.S1, 0, 0));
 
-        contentEnabledSwitch = cleanSwitch(getString(R.string.switch_content_enable_title),
+        Ui.SwitchRow content = ui.switchRow(getString(R.string.switch_content_enable_title),
                 getString(R.string.switch_content_enable_sub));
+        contentEnabledSwitch = content.sw;
         contentEnabledSwitch.setOnCheckedChangeListener((b, v) -> persistSwitches());
-        card.addView(contentEnabledSwitch);
+        card.addView(content.view, ui.margins(Ui.matchWrap(), 0, Ui.S1, 0, 0));
 
-        contentRulesInput = new EditText(this);
-        contentRulesInput.setMinLines(3);
-        contentRulesInput.setGravity(Gravity.TOP | Gravity.START);
-        contentRulesInput.setTextSize(13);
-        contentRulesInput.setTextColor(COLOR_TEXT);
-        contentRulesInput.setHint(getString(R.string.content_rules_hint));
-        contentRulesInput.setHintTextColor(0xFFB0B6C3);
-        contentRulesInput.setPadding(dp(12), dp(12), dp(12), dp(12));
-        contentRulesInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
-        attachFocusScrollListener(contentRulesInput);
-
-        LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        contentLp.topMargin = dp(8);
-        card.addView(contentRulesInput, contentLp);
+        contentRulesInput = ui.field(getString(R.string.content_rules_hint), 3, true);
+        card.addView(contentRulesInput, ui.margins(Ui.matchWrap(), 0, Ui.S2, 0, 0));
 
         return card;
     }
 
-    private View channelCard()
+    /** Search, the only-matched filter and the sort order for the channel list. */
+    private View filterCard()
     {
-        LinearLayout card = cardLayout();
-        card.addView(sectionTitle(getString(R.string.channel_card_title), null));
+        LinearLayout card = ui.card();
 
-        listHeader = new TextView(this);
-        listHeader.setTextSize(12);
-        listHeader.setTextColor(COLOR_SUB);
-        listHeader.setPadding(0, 0, 0, dp(8));
-        card.addView(listHeader);
-
-        searchQueryInput = new EditText(this);
-        searchQueryInput.setHint(getString(R.string.search_channel_hint));
-        searchQueryInput.setHintTextColor(0xFFB0B6C3);
-        searchQueryInput.setTextSize(13);
-        searchQueryInput.setTextColor(COLOR_TEXT);
-        searchQueryInput.setSingleLine(true);
-        searchQueryInput.setPadding(dp(12), dp(10), dp(12), dp(10));
-        searchQueryInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
-        attachFocusScrollListener(searchQueryInput);
+        searchQueryInput = ui.searchField(getString(R.string.search_channel_hint));
         searchQueryInput.addTextChangedListener(new TextWatcher()
         {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
@@ -997,18 +883,13 @@ public final class MainActivity extends Activity
                 renderList();
             }
         });
+        card.addView(searchQueryInput, Ui.matchWrap());
 
-        LinearLayout.LayoutParams searchLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        searchLp.topMargin = dp(4);
-        searchLp.bottomMargin = dp(10);
-        card.addView(searchQueryInput, searchLp);
-
-        onlyMatchedSwitch = cleanSwitch(getString(R.string.switch_only_matched_title),
+        Ui.SwitchRow only = ui.switchRow(getString(R.string.switch_only_matched_title),
                 getString(rootFree()
                         ? R.string.switch_only_matched_sub_rootfree
                         : R.string.switch_only_matched_sub));
+        onlyMatchedSwitch = only.sw;
         // This page is built lazily, i.e. after loadSwitchesAndRules() has run, so
         // it restores its own persisted state rather than being fed it from there.
         onlyMatchedSwitch.setChecked(prefs().getBoolean(KEY_UI_ONLY_MATCHED, true));
@@ -1018,50 +899,39 @@ public final class MainActivity extends Activity
             selected.clear();
             renderList();
         });
-        card.addView(onlyMatchedSwitch);
+        card.addView(only.view, ui.margins(Ui.matchWrap(), 0, Ui.S1, 0, Ui.S1));
 
-        LinearLayout toolbar1 = rowLayout();
-        toolbar1.setPadding(0, dp(10), 0, 0);
+        sortSelector = ui.segmented(
+                new String[]{getString(R.string.sort_by_app), getString(R.string.sort_by_alpha)},
+                sortMode == SORT_BY_APP ? 0 : 1,
+                idx ->
+                {
+                    sortMode = idx == 0 ? SORT_BY_APP : SORT_BY_ALPHA;
+                    renderList();
+                });
+        card.addView(sortSelector.view, Ui.matchWrap());
 
-        Button refreshButton = softButton(getString(R.string.action_refresh));
-        refreshButton.setOnClickListener(v ->
-        {
-            reloadChannelsAndOverrides();
-            renderList();
-            Toast.makeText(this, getString(R.string.toast_refreshed), Toast.LENGTH_SHORT).show();
-        });
-        toolbar1.addView(refreshButton, equalWeightWithGap(true));
+        return card;
+    }
 
-        sortButton = softButton(getString(R.string.sort_by_app));
-        sortButton.setOnClickListener(v ->
-        {
-            sortMode = (sortMode == SORT_BY_APP) ? SORT_BY_ALPHA : SORT_BY_APP;
-            renderList();
-        });
-        toolbar1.addView(sortButton, equalWeightWithGap(true));
+    /** Multi-select and the batch actions, which apply to the ticked or the listed rows. */
+    private View batchCard()
+    {
+        LinearLayout card = ui.card();
 
-        multiSelectButton = softButton(getString(R.string.action_multi_select));
+        LinearLayout row1 = ui.row();
+        multiSelectButton = ui.button(Ui.BTN_TONAL, getString(R.string.action_multi_select));
         multiSelectButton.setOnClickListener(v ->
         {
             multiSelectMode = !multiSelectMode;
+            ui.styleButton(multiSelectButton, multiSelectMode ? Ui.BTN_PRIMARY : Ui.BTN_TONAL);
+            Haptics.toggle(v, multiSelectMode);
             selected.clear();
             renderList();
         });
-        toolbar1.addView(multiSelectButton, equalWeightWithGap(false));
-        card.addView(toolbar1);
+        row1.addView(multiSelectButton, gapRight());
 
-        LinearLayout toolbar2 = rowLayout();
-        toolbar2.setPadding(0, dp(8), 0, 0);
-
-        Button blockAll = dangerButton(getString(R.string.action_block_all));
-        blockAll.setOnClickListener(v -> batchSet(true));
-        toolbar2.addView(blockAll, equalWeightWithGap(true));
-
-        Button allowAll = successButton(getString(R.string.action_allow_all));
-        allowAll.setOnClickListener(v -> batchSet(false));
-        toolbar2.addView(allowAll, equalWeightWithGap(true));
-
-        selectAllButton = softButton(getString(R.string.action_select_all_clear));
+        selectAllButton = ui.button(Ui.BTN_OUTLINE, getString(R.string.action_select_all_clear));
         selectAllButton.setOnClickListener(v ->
         {
             List<ChannelRecord> visible = visibleChannels();
@@ -1078,38 +948,33 @@ public final class MainActivity extends Activity
             }
             renderList();
         });
-        toolbar2.addView(selectAllButton, equalWeightWithGap(false));
-        card.addView(toolbar2);
+        row1.addView(selectAllButton, Ui.fillRow());
+        card.addView(row1, Ui.matchWrap());
 
-        LinearLayout toolbar3 = rowLayout();
-        toolbar3.setPadding(0, dp(8), 0, 0);
-        Button resetDefault = softButton(getString(R.string.action_reset_default));
+        LinearLayout row2 = ui.row();
+        Button blockAll = ui.button(Ui.BTN_DANGER, getString(R.string.action_block_all));
+        blockAll.setOnClickListener(v -> batchSet(true));
+        row2.addView(blockAll, gapRight());
+
+        Button allowAll = ui.button(Ui.BTN_SUCCESS, getString(R.string.action_allow_all));
+        allowAll.setOnClickListener(v -> batchSet(false));
+        row2.addView(allowAll, Ui.fillRow());
+        card.addView(row2, ui.margins(Ui.matchWrap(), 0, Ui.S2, 0, 0));
+
+        Button resetDefault = ui.button(Ui.BTN_OUTLINE, getString(R.string.action_reset_default));
         resetDefault.setOnClickListener(v -> batchClearOverrides());
-        toolbar3.addView(resetDefault, equalWeightWithGap(false));
-        card.addView(toolbar3);
+        card.addView(resetDefault, ui.margins(Ui.matchWrap(), 0, Ui.S2, 0, 0));
 
-        batchHint = new TextView(this);
-        batchHint.setTextSize(12);
-        batchHint.setTextColor(COLOR_SUB);
-        batchHint.setPadding(dp(12), dp(8), dp(12), dp(8));
-        batchHint.setBackground(roundBg(0xFFF8FAFF, dp(12)));
-
-        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        hintLp.topMargin = dp(10);
-        card.addView(batchHint, hintLp);
-
-        listContainer = new LinearLayout(this);
-        listContainer.setOrientation(LinearLayout.VERTICAL);
-
-        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        listLp.topMargin = dp(8);
-        card.addView(listContainer, listLp);
+        batchHint = ui.text("", Ui.Type.CAPTION, ui.p.onSurfaceVariant);
+        card.addView(batchHint, ui.margins(Ui.matchWrap(), Ui.S1, Ui.S3, Ui.S1, 0));
 
         return card;
+    }
+
+    /** Equal-width slot in a button row, with the gap on its right. */
+    private LinearLayout.LayoutParams gapRight()
+    {
+        return ui.margins(Ui.fillRow(), 0, 0, Ui.S2, 0);
     }
 
     @SuppressWarnings("deprecation")
@@ -1275,13 +1140,17 @@ public final class MainActivity extends Activity
         String rules = rulesInput.getText().toString();
         String contentRules = contentRulesInput.getText().toString();
         String bad = firstInvalidRegex(rules);
+        EditText badField = rulesInput;
         if (bad == null)
         {
             bad = firstInvalidRegex(contentRules);
+            badField = contentRulesInput;
         }
         if (bad != null)
         {
-            Toast.makeText(this, getString(R.string.toast_regex_invalid_fmt, bad), Toast.LENGTH_LONG).show();
+            // Point at the field that is wrong, not just at a toast about it.
+            ui.markError(badField);
+            say(getString(R.string.toast_regex_invalid_fmt, bad), true);
             return;
         }
 
@@ -1301,14 +1170,20 @@ public final class MainActivity extends Activity
             // The listener reads mnblocker_prefs directly (same uid, no su
             // bridge), so there is no hook to sync to and nothing that can fail
             // — hence plain success, and NOT the root path's "synced to Hook".
-            Toast.makeText(this, getString(R.string.toast_saved_rootfree), Toast.LENGTH_LONG).show();
+            Haptics.confirm(contentFrame);
+            say(getString(R.string.toast_saved_rootfree), false);
         }
         else
         {
-            persistConfigFile(false, ok -> Toast.makeText(this,
-                    ok ? getString(R.string.toast_saved_synced)
-                            : getString(R.string.toast_saved_sync_failed),
-                    Toast.LENGTH_LONG).show());
+            persistConfigFile(false, ok ->
+            {
+                if (ok)
+                {
+                    Haptics.confirm(contentFrame);
+                }
+                say(ok ? getString(R.string.toast_saved_synced)
+                        : getString(R.string.toast_saved_sync_failed), !ok);
+            });
         }
 
         refreshStatus();
@@ -1356,6 +1231,7 @@ public final class MainActivity extends Activity
         {
             channels.clear();
             channels.addAll(s.channels);
+            channelsLoaded = true;
             regexCache.clear(); // the records themselves may have changed
 
             overrides.clear();
@@ -1476,19 +1352,18 @@ public final class MainActivity extends Activity
                 : "—";
 
         statsTilesContainer.removeAllViews();
+        // Bento: the headline counter leads in the accent tile, the rest stay neutral.
         statsTilesContainer.addView(tileRow(
-                statTile(getString(R.string.stat_tile_content_blocks), String.valueOf(cs.count)),
-                statTile(getString(R.string.stat_tile_channel_blocks), String.valueOf(totalBlockedChannels))));
+                statTile(getString(R.string.stat_tile_content_blocks), String.valueOf(cs.count), true),
+                statTile(getString(R.string.stat_tile_channel_blocks),
+                        String.valueOf(totalBlockedChannels), false)));
         statsTilesContainer.addView(tileRow(
-                statTile(getString(R.string.stat_tile_apps), String.valueOf(apps.size())),
-                statTile(getString(R.string.stat_tile_rules), String.valueOf(ruleCount))));
+                statTile(getString(R.string.stat_tile_apps), String.valueOf(apps.size()), false),
+                statTile(getString(R.string.stat_tile_rules), String.valueOf(ruleCount), false)));
 
-        TextView lastLine = new TextView(this);
-        lastLine.setTextSize(12);
-        lastLine.setTextColor(COLOR_SUB);
-        lastLine.setText(getString(R.string.stats_last_blocked_fmt, when));
-        lastLine.setPadding(dp(2), dp(4), 0, 0);
-        statsTilesContainer.addView(lastLine);
+        statsTilesContainer.addView(ui.text(getString(R.string.stats_last_blocked_fmt, when),
+                Ui.Type.CAPTION, ui.p.onSurfaceVariant),
+                ui.margins(Ui.matchWrap(), Ui.S1, 0, Ui.S1, Ui.S1));
 
         // ---- combined ranking (channel blocks + content blocks), desc ----
         final Map<String, Integer> chan = blockedByApp;
@@ -1515,14 +1390,8 @@ public final class MainActivity extends Activity
         rankingContainer.removeAllViews();
         if (rank.isEmpty())
         {
-            TextView empty = new TextView(this);
-            empty.setText(getString(R.string.stats_empty));
-            empty.setTextSize(12);
-            empty.setTextColor(COLOR_SUB);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(14), dp(20), dp(14), dp(20));
-            empty.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
-            rankingContainer.addView(empty);
+            rankingContainer.addView(ui.emptyState(R.drawable.ic_inbox,
+                    getString(R.string.stats_empty), 0));
             return;
         }
         int i = 1;
@@ -1557,106 +1426,72 @@ public final class MainActivity extends Activity
 
     private View tileRow(View a, View b)
     {
-        LinearLayout row = rowLayout();
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.bottomMargin = dp(10);
-        row.setLayoutParams(rowLp);
-
-        LinearLayout.LayoutParams lpA = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lpA.rightMargin = dp(10);
-        row.addView(a, lpA);
-        row.addView(b, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout row = ui.row();
+        row.setGravity(Gravity.TOP);
+        row.setLayoutParams(ui.margins(Ui.matchWrap(), 0, 0, 0, Ui.S3));
+        row.addView(a, ui.margins(Ui.fillRow(), 0, 0, Ui.S3, 0));
+        row.addView(b, Ui.fillRow());
         return row;
     }
 
-    private View statTile(String label, String value)
+    private View statTile(String label, String value, boolean accent)
     {
-        LinearLayout t = new LinearLayout(this);
-        t.setOrientation(LinearLayout.VERTICAL);
-        t.setPadding(dp(14), dp(14), dp(14), dp(14));
-        t.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
+        LinearLayout t = ui.column();
+        t.setMinimumHeight(ui.dp(STAT_TILE_DP));
+        t.setPadding(ui.dp(Ui.S4), ui.dp(Ui.S4), ui.dp(Ui.S4), ui.dp(Ui.S4));
+        t.setBackground(ui.shape(accent ? ui.p.primaryContainer : ui.p.surface, Ui.R_LARGE));
 
-        TextView l = new TextView(this);
-        l.setText(label);
-        l.setTextSize(12);
-        l.setTextColor(COLOR_SUB);
-        t.addView(l);
-
-        TextView v = new TextView(this);
-        v.setText(value);
-        v.setTextSize(24);
-        v.setTypeface(Typeface.DEFAULT_BOLD);
-        v.setTextColor(COLOR_PRIMARY_DARK);
-        v.setPadding(0, dp(6), 0, 0);
-        t.addView(v);
+        t.addView(ui.text(label, Ui.Type.CAPTION,
+                accent ? ui.p.onPrimaryContainer : ui.p.onSurfaceVariant));
+        t.addView(ui.text(value, Ui.Type.NUMBER,
+                accent ? ui.p.onPrimaryContainer : ui.p.primary),
+                ui.margins(Ui.matchWrap(), 0, Ui.S2, 0, 0));
         return t;
     }
 
     private View rankingRow(int rank, String pkg, int channelBlocks, long contentBlocks)
     {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(10), dp(12), dp(10));
-        row.setBackground(roundStrokeBg(Color.WHITE, dp(16), COLOR_LINE, 1));
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.bottomMargin = dp(8);
-        row.setLayoutParams(rowLp);
+        LinearLayout row = ui.row();
+        row.setMinimumHeight(ui.dp(Ui.ROW_MIN));
+        row.setPadding(ui.dp(Ui.S2), ui.dp(Ui.S2), ui.dp(Ui.S1), ui.dp(Ui.S2));
+        row.setLayoutParams(Ui.matchWrap());
+
+        boolean podium = rank <= PODIUM;
+        TextView badge = ui.text(String.valueOf(rank), Ui.Type.LABEL,
+                podium ? ui.p.onPrimaryContainer : ui.p.onSurfaceVariant);
+        badge.setGravity(Gravity.CENTER);
+        badge.setMinWidth(ui.dp(RANK_BADGE_DP));
+        badge.setMinHeight(ui.dp(RANK_BADGE_DP));
+        badge.setBackground(ui.circle(podium ? ui.p.primaryContainer : ui.p.surfaceVariant));
+        row.addView(badge, ui.margins(Ui.wrapWrap(), 0, 0, Ui.S3, 0));
 
         ImageView iconView = new ImageView(this);
+        iconView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         AppIconCache.bindIcon(this, iconView, pkg);
-        row.addView(iconView, new LinearLayout.LayoutParams(dp(38), dp(38)));
+        row.addView(iconView, ui.margins(ui.size(Ui.APP_ICON, Ui.APP_ICON), 0, 0, Ui.S3, 0));
 
-        LinearLayout text = new LinearLayout(this);
-        text.setOrientation(LinearLayout.VERTICAL);
-        text.setPadding(dp(6), 0, dp(8), 0);
-        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        text.setLayoutParams(tlp);
-
-        TextView name = new TextView(this);
-        name.setText(appLabel(pkg));
-        name.setTextSize(14);
-        name.setTextColor(COLOR_TEXT);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout text = ui.column();
+        TextView name = ui.text(appLabel(pkg), Ui.Type.TITLE_SMALL, ui.p.onSurface);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
         text.addView(name);
 
-        TextView meta = new TextView(this);
-        meta.setText(getString(R.string.ranking_meta_fmt, channelBlocks, contentBlocks, pkg));
-        meta.setTextSize(10);
-        meta.setTextColor(COLOR_SUB);
+        TextView meta = ui.text(getString(R.string.ranking_meta_fmt, channelBlocks, contentBlocks, pkg),
+                Ui.Type.CAPTION, ui.p.onSurfaceVariant);
         meta.setSingleLine(true);
         meta.setEllipsize(TextUtils.TruncateAt.END);
-        meta.setPadding(0, dp(3), 0, 0);
-        text.addView(meta);
-        row.addView(text);
+        text.addView(meta, ui.margins(Ui.matchWrap(), 0, Ui.S_HALF, 0, 0));
+        row.addView(text, Ui.fillRow());
 
-        TextView total = new TextView(this);
-        total.setText(String.valueOf(channelBlocks + contentBlocks));
-        total.setTextSize(18);
-        total.setTypeface(Typeface.DEFAULT_BOLD);
-        total.setTextColor(COLOR_DANGER);
-        row.addView(total);
+        row.addView(ui.text(String.valueOf(channelBlocks + contentBlocks),
+                Ui.Type.NUMBER_SMALL, ui.p.danger), ui.margins(Ui.wrapWrap(), Ui.S2, 0, 0, 0));
 
         // Tap the row to see this app's dropped content notifications in detail.
-        TextView chevron = new TextView(this);
-        chevron.setText("›");
-        chevron.setTextSize(22);
-        chevron.setTextColor(COLOR_SUB);
-        chevron.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams chLp = new LinearLayout.LayoutParams(dp(20), dp(38));
-        chLp.leftMargin = dp(4);
-        row.addView(chevron, chLp);
+        row.addView(ui.icon(R.drawable.ic_chevron_right, ui.p.onSurfaceVariant),
+                ui.margins(ui.size(Ui.ICON, Ui.ICON), Ui.S1, 0, 0, 0));
 
         final String tapPkg = pkg;
-        row.setClickable(true);
-        row.setOnClickListener(v ->
+        ui.tappable(row, ui.p.surface, Ui.R_MEDIUM, v ->
         {
             Intent it = new Intent(this, BlockedNotificationsActivity.class);
             it.putExtra(BlockedNotificationsActivity.EXTRA_PKG, tapPkg);
@@ -1693,9 +1528,12 @@ public final class MainActivity extends Activity
                     final boolean okF = ok;
                     runOnUiThread(() ->
                     {
-                        Toast.makeText(this,
-                                okF ? getString(R.string.toast_cleared) : getString(R.string.toast_clear_failed),
-                                Toast.LENGTH_SHORT).show();
+                        if (okF)
+                        {
+                            Haptics.confirm(contentFrame);
+                        }
+                        say(okF ? getString(R.string.toast_cleared)
+                                : getString(R.string.toast_clear_failed), !okF);
                         refreshStats();
                     });
                 }).start())
@@ -1750,10 +1588,8 @@ public final class MainActivity extends Activity
                 {
                     if (!ok && showToast)
                     {
-                        Toast.makeText(this,
-                                getString(R.string.toast_config_sync_failed_fmt,
-                                        ConfigFileStore.CONFIG_FILE),
-                                Toast.LENGTH_LONG).show();
+                        say(getString(R.string.toast_config_sync_failed_fmt,
+                                ConfigFileStore.CONFIG_FILE), true);
                     }
                     if (then != null)
                     {
@@ -1787,12 +1623,9 @@ public final class MainActivity extends Activity
             return;
         }
 
-        sortButton.setText(sortMode == SORT_BY_APP
-                ? getString(R.string.sort_by_app) : getString(R.string.sort_by_alpha));
         multiSelectButton.setText(multiSelectMode
                 ? getString(R.string.multi_select_active) : getString(R.string.action_multi_select));
-        selectAllButton.setEnabled(multiSelectMode);
-        selectAllButton.setAlpha(multiSelectMode ? 1.0f : 0.45f);
+        Ui.setEnabledLook(selectAllButton, multiSelectMode);
 
         List<ChannelRecord> visible = visibleChannels();
 
@@ -1811,9 +1644,20 @@ public final class MainActivity extends Activity
         // used to make those taps stutter.
         listContainer.removeAllViews();
 
+        if (!channelsLoaded)
+        {
+            // First load still in flight (su-backed in root mode): show the shape
+            // of the list, not an "empty" verdict that is not true yet.
+            listHeader.setText("");
+            for (int i = 0; i < SKELETON_ROWS; i++)
+            {
+                listContainer.addView(ui.skeletonRow());
+            }
+            return;
+        }
+
         if (visible.isEmpty())
         {
-            TextView empty = new TextView(this);
             // The root-mode text tells the user to check root read access — advice
             // that makes no sense in root-free mode, where the store is this app's
             // own private file and a sparse list is expected rather than a fault.
@@ -1828,13 +1672,8 @@ public final class MainActivity extends Activity
                         ? R.string.empty_no_data_rootfree
                         : R.string.empty_no_data;
             }
-            empty.setText(getString(emptyText));
-            empty.setTextSize(12);
-            empty.setTextColor(COLOR_SUB);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(14), dp(22), dp(14), dp(22));
-            empty.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
-            listContainer.addView(empty);
+            listContainer.addView(ui.emptyState(R.drawable.ic_inbox,
+                    getString(emptyText), ui.p.surface));
             listHeader.setText(getString(R.string.list_header_zero_fmt, channels.size()));
             return;
         }
@@ -1928,36 +1767,22 @@ public final class MainActivity extends Activity
 
     private View appGroupHeader(String pkg)
     {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(2), dp(14), dp(2), dp(6));
+        LinearLayout row = ui.row();
+        row.setPadding(ui.dp(Ui.S1), ui.dp(Ui.S4), ui.dp(Ui.S1), ui.dp(Ui.S2));
 
         ImageView icon = new ImageView(this);
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
         AppIconCache.bindIcon(this, icon, pkg);
-        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(20), dp(20));
-        iconLp.rightMargin = dp(8);
-        row.addView(icon, iconLp);
+        row.addView(icon, ui.margins(ui.size(Ui.APP_ICON_SMALL, Ui.APP_ICON_SMALL), 0, 0, Ui.S2, 0));
 
-        TextView name = new TextView(this);
-        name.setText(appLabel(pkg));
-        name.setTextSize(12);
-        name.setTextColor(COLOR_TEXT);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
-        row.addView(name);
+        row.addView(ui.text(appLabel(pkg), Ui.Type.LABEL, ui.p.onSurface));
 
         // Keep the package visible — two apps can share a label, and it is what
         // the per-channel override is actually keyed on.
-        TextView pkgView = new TextView(this);
-        pkgView.setText(pkg);
-        pkgView.setTextSize(10);
-        pkgView.setTextColor(COLOR_SUB);
+        TextView pkgView = ui.text(pkg, Ui.Type.CAPTION, ui.p.onSurfaceVariant);
         pkgView.setSingleLine(true);
         pkgView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-        LinearLayout.LayoutParams pkgLp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        pkgLp.leftMargin = dp(8);
-        row.addView(pkgView, pkgLp);
+        row.addView(pkgView, ui.margins(Ui.fillRow(), Ui.S2, 0, 0, 0));
 
         return row;
     }
@@ -1971,46 +1796,34 @@ public final class MainActivity extends Activity
      */
     private LinearLayout createChannelRow()
     {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(10), dp(10), dp(10));
-        row.setBackground(roundStrokeBg(Color.WHITE, dp(16), COLOR_LINE, 1));
+        LinearLayout row = ui.row();
+        row.setMinimumHeight(ui.dp(Ui.ROW_MIN));
+        row.setPadding(ui.dp(Ui.S3), ui.dp(Ui.S3), ui.dp(Ui.S3), ui.dp(Ui.S3));
+        row.setBackground(ui.ripple(ui.shape(ui.p.surface, Ui.R_MEDIUM), Ui.R_MEDIUM));
+        row.setLayoutParams(ui.margins(Ui.matchWrap(), 0, 0, 0, Ui.S2));
 
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.bottomMargin = dp(8);
-        row.setLayoutParams(rowLp);
+        row.addView(ui.checkBox()); // child 0
 
-        row.addView(new CheckBox(this)); // child 0
+        LinearLayout text = ui.column();
 
-        LinearLayout text = new LinearLayout(this);
-        text.setOrientation(LinearLayout.VERTICAL);
-        text.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView nameView = new TextView(this);
-        nameView.setTextSize(14);
-        nameView.setTextColor(COLOR_TEXT);
-        nameView.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView nameView = ui.text("", Ui.Type.TITLE_SMALL, ui.p.onSurface);
         text.addView(nameView); // text 0
 
-        TextView metaView = new TextView(this);
-        metaView.setTextSize(10);
-        metaView.setTextColor(COLOR_SUB);
+        TextView metaView = ui.text("", Ui.Type.CAPTION, ui.p.onSurfaceVariant);
         metaView.setSingleLine(true);
         metaView.setEllipsize(TextUtils.TruncateAt.END);
-        metaView.setPadding(0, dp(3), 0, dp(3));
-        text.addView(metaView); // text 1
+        text.addView(metaView, ui.margins(Ui.matchWrap(), 0, Ui.S_HALF, 0, 0)); // text 1
 
-        TextView statusLine = new TextView(this);
-        statusLine.setTextSize(10);
-        statusLine.setTypeface(Typeface.DEFAULT_BOLD);
-        text.addView(statusLine); // text 2
+        TextView statusLine = ui.text("", Ui.Type.CAPTION, ui.p.onSurfaceVariant);
+        statusLine.setTypeface(Ui.typeface(Ui.Weight.MEDIUM));
+        text.addView(statusLine, ui.margins(Ui.matchWrap(), 0, Ui.S1, 0, 0)); // text 2
 
-        row.addView(text);            // child 1
-        row.addView(new Switch(this)); // child 2
+        row.addView(text, Ui.fillRow()); // child 1
+
+        Switch sw = ui.switchView();
+        // Click, not checked-change: only a user flip should buzz, never a rebind.
+        sw.setOnClickListener(v -> Haptics.toggle(v, ((Switch) v).isChecked()));
+        row.addView(sw, ui.margins(Ui.wrapWrap(), Ui.S2, 0, 0, 0)); // child 2
         return row;
     }
 
@@ -2045,13 +1858,14 @@ public final class MainActivity extends Activity
             batchHint.setText(getString(R.string.batch_hint_multi_fmt, selected.size()));
         });
 
-        text.setPadding(multiSelectMode ? 0 : dp(2), 0, dp(8), 0);
+        text.setPadding(multiSelectMode ? 0 : ui.dp(Ui.S_HALF), 0, ui.dp(Ui.S2), 0);
         nameView.setText(displayName(r));
+        sw.setContentDescription(displayName(r));
         metaView.setText(r.pkg + "  ·  id=" + (TextUtils.isEmpty(r.id) ? "—" : r.id));
 
         statusLine.setText(getString(R.string.status_line_fmt, verdictSource(r),
                 getString(blocked ? R.string.status_blocked : R.string.status_allowed)));
-        statusLine.setTextColor(blocked ? COLOR_DANGER : COLOR_SUCCESS);
+        statusLine.setTextColor(blocked ? ui.p.danger : ui.p.success);
 
         sw.setOnCheckedChangeListener(null);
         sw.setChecked(blocked);
@@ -2061,7 +1875,7 @@ public final class MainActivity extends Activity
             persistOverrides();
             statusLine.setText(getString(R.string.status_line_fmt, getString(R.string.source_override),
                     getString(checked ? R.string.status_blocked : R.string.status_allowed)));
-            statusLine.setTextColor(checked ? COLOR_DANGER : COLOR_SUCCESS);
+            statusLine.setTextColor(checked ? ui.p.danger : ui.p.success);
             List<ChannelRecord> visible = visibleChannels();
             listHeader.setText(getString(R.string.list_header_fmt,
                     visible.size(), channels.size(), countBlocked(visible)));
@@ -2121,7 +1935,7 @@ public final class MainActivity extends Activity
         {
             if (selected.isEmpty())
             {
-                Toast.makeText(this, getString(R.string.toast_select_first), Toast.LENGTH_SHORT).show();
+                say(getString(R.string.toast_select_first), true);
                 return null;
             }
             return new LinkedHashSet<>(selected);
@@ -2129,7 +1943,7 @@ public final class MainActivity extends Activity
         Set<String> visible = visibleKeySet();
         if (visible.isEmpty())
         {
-            Toast.makeText(this, getString(R.string.toast_list_empty), Toast.LENGTH_SHORT).show();
+            say(getString(R.string.toast_list_empty), true);
         }
         return visible.isEmpty() ? null : visible;
     }
@@ -2149,9 +1963,9 @@ public final class MainActivity extends Activity
 
         persistOverrides();
         renderList();
-        Toast.makeText(this,
-                getString(block ? R.string.toast_blocked_n_fmt : R.string.toast_allowed_n_fmt, targets.size()),
-                Toast.LENGTH_SHORT).show();
+        Haptics.confirm(contentFrame);
+        say(getString(block ? R.string.toast_blocked_n_fmt : R.string.toast_allowed_n_fmt,
+                targets.size()), false);
     }
 
     /**
@@ -2185,13 +1999,14 @@ public final class MainActivity extends Activity
 
         if (cleared == 0)
         {
-            Toast.makeText(this, getString(R.string.toast_no_override), Toast.LENGTH_SHORT).show();
+            say(getString(R.string.toast_no_override), true);
             return;
         }
 
         persistOverrides();
         renderList();
-        Toast.makeText(this, getString(R.string.toast_reset_n_fmt, cleared), Toast.LENGTH_SHORT).show();
+        Haptics.confirm(contentFrame);
+        say(getString(R.string.toast_reset_n_fmt, cleared), false);
     }
 
     private boolean effectiveBlocked(ChannelRecord r)
@@ -2417,31 +2232,23 @@ public final class MainActivity extends Activity
      */
     private View statusBox()
     {
-        statusBox = new LinearLayout(this);
-        statusBox.setOrientation(LinearLayout.VERTICAL);
-        statusBox.setPadding(dp(14), dp(12), dp(14), dp(13));
+        statusBox = ui.column();
+        statusBox.setPadding(ui.dp(Ui.S4), ui.dp(Ui.S3), ui.dp(Ui.S4), ui.dp(Ui.S4));
+        statusBg = new SmoothCornerDrawable(ui.p.surface, ui.dp(Ui.R_MEDIUM));
+        statusBox.setBackground(statusBg);
 
-        LinearLayout stateRow = new LinearLayout(this);
-        stateRow.setOrientation(LinearLayout.HORIZONTAL);
-        stateRow.setGravity(Gravity.CENTER_VERTICAL);
-
+        LinearLayout stateRow = ui.row();
         statusDot = new View(this);
-        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
-        dotLp.rightMargin = dp(8);
-        stateRow.addView(statusDot, dotLp);
-
-        statusState = new TextView(this);
-        statusState.setTextSize(14);
-        statusState.setTypeface(Typeface.DEFAULT_BOLD);
-        stateRow.addView(statusState, wrapParams());
+        stateRow.addView(statusDot, ui.margins(ui.size(STATUS_DOT_DP, STATUS_DOT_DP),
+                0, 0, Ui.S2, 0));
+        statusState = ui.text("", Ui.Type.TITLE_SMALL, ui.p.onSurface);
+        stateRow.addView(statusState, Ui.fillRow());
         statusBox.addView(stateRow);
 
         statusDivider = new View(this);
-        LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1) / 2));
-        divLp.topMargin = dp(11);
-        divLp.bottomMargin = dp(12);
-        statusBox.addView(statusDivider, divLp);
+        statusBox.addView(statusDivider, ui.margins(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, ui.dp(1) / 2)),
+                0, Ui.S3, 0, Ui.S3));
 
         statusValues = new TextView[6];
         statusLabels = new TextView[6];
@@ -2449,49 +2256,36 @@ public final class MainActivity extends Activity
                 R.string.status_label_rules,
                 R.string.status_label_allow,
                 R.string.status_label_apps));
-
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(12);
         statusBox.addView(statusGridRow(3,
                 R.string.status_label_overrides,
                 R.string.status_label_content_rules,
-                R.string.status_label_content), rowLp);
+                R.string.status_label_content), ui.margins(Ui.matchWrap(), 0, Ui.S3, 0, 0));
 
         return statusBox;
     }
 
     private View statusGridRow(int start, int labelA, int labelB, int labelC)
     {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.addView(statusCell(start, labelA));
-        row.addView(statusCell(start + 1, labelB));
-        row.addView(statusCell(start + 2, labelC));
+        LinearLayout row = ui.row();
+        row.setGravity(Gravity.TOP);
+        row.addView(statusCell(start, labelA), Ui.fillRow());
+        row.addView(statusCell(start + 1, labelB), Ui.fillRow());
+        row.addView(statusCell(start + 2, labelC), Ui.fillRow());
         return row;
     }
 
     /** One counter: value over label, an equal-width column of the grid. */
     private View statusCell(int index, int labelRes)
     {
-        LinearLayout cell = new LinearLayout(this);
-        cell.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout cell = ui.column();
 
-        TextView value = new TextView(this);
-        value.setTextSize(17);
-        value.setTypeface(Typeface.DEFAULT_BOLD);
+        TextView value = ui.text("", Ui.Type.NUMBER_SMALL, ui.p.onSurface);
         cell.addView(value);
         statusValues[index] = value;
 
-        TextView label = new TextView(this);
-        label.setText(getString(labelRes));
-        label.setTextSize(10);
-        label.setPadding(0, dp(2), 0, 0);
-        cell.addView(label);
+        TextView label = ui.text(getString(labelRes), Ui.Type.CAPTION, ui.p.onSurfaceVariant);
+        cell.addView(label, ui.margins(Ui.matchWrap(), 0, Ui.S_HALF, Ui.S1, 0));
         statusLabels[index] = label;
-
-        cell.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         return cell;
     }
 
@@ -2585,10 +2379,11 @@ public final class MainActivity extends Activity
         boolean hookTrouble = !rf && hookStateCached != null
                 && hookStateCached != HookAliveStore.State.ALIVE;
         boolean warnStyle = safeMode || (rf && !listenerConnected) || hookTrouble;
-        int text = warnStyle ? COLOR_WARN_TEXT : Color.WHITE;
-        int label = warnStyle ? 0xCC9A5B00 : 0xB3E7ECFF;
-        statusBox.setBackground(roundBg(warnStyle ? COLOR_WARN_BG : 0x22FFFFFF, dp(16)));
-        statusDivider.setBackgroundColor(warnStyle ? 0x339A5B00 : 0x33FFFFFF);
+        int text = warnStyle ? ui.p.onWarnContainer : ui.p.onSurface;
+        int label = warnStyle ? ui.p.onWarnContainer : ui.p.onSurfaceVariant;
+        statusBg.setFillColor(warnStyle ? ui.p.warnContainer : ui.p.surface);
+        statusDivider.setBackgroundColor(warnStyle
+                ? Palette.withAlpha(ui.p.onWarnContainer, 0.2f) : ui.p.outlineVariant);
         statusState.setTextColor(text);
         for (int i = 0; i < statusValues.length; i++)
         {
@@ -2599,8 +2394,12 @@ public final class MainActivity extends Activity
         // have not established yet — would be the same kind of lie the old
         // grant-only status banner told.
         boolean unproven = masterOff || (!rf && hookStateCached == null);
-        statusDot.setBackground(roundBg(
-                warnStyle ? COLOR_WARN_TEXT : (unproven ? 0x99FFFFFF : 0xFF4ADE80), dp(4)));
+        statusDot.setBackground(ui.circle(
+                warnStyle ? ui.p.onWarnContainer : (unproven ? ui.p.outline : ui.p.success)));
+        if (heroModeChip != null)
+        {
+            heroModeChip.setText(modeLabel());
+        }
 
         if (clearSafeModeButton != null)
         {
@@ -2617,159 +2416,6 @@ public final class MainActivity extends Activity
         {
             grantAccessButton.setVisibility(rf && !listenerGranted ? View.VISIBLE : View.GONE);
         }
-    }
-
-    private LinearLayout cardLayout()
-    {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(roundBg(COLOR_CARD, dp(22)));
-        card.setElevation(dp(2));
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(14);
-        card.setLayoutParams(lp);
-        return card;
-    }
-
-    private View sectionTitle(String title, String desc)
-    {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, 0, 0, dp(12));
-
-        TextView titleView = new TextView(this);
-        titleView.setText(title);
-        titleView.setTextSize(17);
-        titleView.setTextColor(COLOR_TEXT);
-        titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(titleView);
-
-        if (!TextUtils.isEmpty(desc))
-        {
-            TextView descView = new TextView(this);
-            descView.setText(desc);
-            descView.setTextSize(12);
-            descView.setTextColor(COLOR_SUB);
-            descView.setPadding(0, dp(4), 0, 0);
-            box.addView(descView);
-        }
-
-        return box;
-    }
-
-    private Switch cleanSwitch(String title, String sub)
-    {
-        Switch sw = new Switch(this);
-        sw.setText(TextUtils.isEmpty(sub) ? title : title + "\n" + sub);
-        sw.setTextSize(13);
-        sw.setTextColor(COLOR_TEXT);
-        sw.setPadding(0, dp(8), 0, dp(8));
-        return sw;
-    }
-
-    private View divider()
-    {
-        View v = new View(this);
-        v.setBackgroundColor(COLOR_LINE);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                1);
-        lp.topMargin = dp(4);
-        lp.bottomMargin = dp(4);
-        v.setLayoutParams(lp);
-        return v;
-    }
-
-    private Button primaryButton(String text)
-    {
-        Button b = baseButton(text);
-        b.setTextColor(Color.WHITE);
-        b.setBackground(roundBg(COLOR_PRIMARY, dp(14)));
-        return b;
-    }
-
-    private Button softButton(String text)
-    {
-        Button b = baseButton(text);
-        b.setTextColor(COLOR_PRIMARY_DARK);
-        b.setBackground(roundBg(0xFFEFF3FF, dp(14)));
-        return b;
-    }
-
-    private Button dangerButton(String text)
-    {
-        Button b = baseButton(text);
-        b.setTextColor(Color.WHITE);
-        b.setBackground(roundBg(0xFFE53935, dp(14)));
-        return b;
-    }
-
-    private Button successButton(String text)
-    {
-        Button b = baseButton(text);
-        b.setTextColor(Color.WHITE);
-        b.setBackground(roundBg(0xFF43A047, dp(14)));
-        return b;
-    }
-
-    private Button baseButton(String text)
-    {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextSize(13);
-        b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setGravity(Gravity.CENTER);
-        b.setMinHeight(0);
-        b.setMinWidth(0);
-        b.setPadding(dp(8), 0, dp(8), 0);
-        return b;
-    }
-
-    private LinearLayout rowLayout()
-    {
-        LinearLayout l = new LinearLayout(this);
-        l.setOrientation(LinearLayout.HORIZONTAL);
-        return l;
-    }
-
-    private LinearLayout.LayoutParams equalWeightWithGap(boolean hasRightGap)
-    {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                0,
-                dp(42),
-                1f);
-        if (hasRightGap)
-        {
-            lp.rightMargin = dp(8);
-        }
-        return lp;
-    }
-
-    private LinearLayout.LayoutParams wrapParams()
-    {
-        return new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-    }
-
-    private GradientDrawable roundBg(int color, int radius)
-    {
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(color);
-        gd.setCornerRadius(radius);
-        return gd;
-    }
-
-    private GradientDrawable roundStrokeBg(int color, int radius, int strokeColor, int strokeWidth)
-    {
-        GradientDrawable gd = roundBg(color, radius);
-        gd.setStroke(strokeWidth, strokeColor);
-        return gd;
     }
 
     private void setCheckedSilently(Switch sw, boolean checked)
@@ -2797,40 +2443,18 @@ public final class MainActivity extends Activity
         }
     }
 
-    /**
-     * Show a hint anchored near the bottom of the screen that fades out
-     * after 2 seconds.
-     */
-    private void showFadeHint(String text)
+    /** Message over the bottom of the current page, clear of the tab bar. */
+    private void say(String message, boolean error)
     {
-        android.widget.TextView hint = new android.widget.TextView(this);
-        hint.setText(text);
-        hint.setTextColor(android.graphics.Color.WHITE);
-        hint.setTextSize(14);
-        hint.setGravity(Gravity.CENTER);
-        hint.setPadding(dp(24), dp(12), dp(24), dp(12));
-        hint.setBackground(roundBg(0xCC333333, dp(24)));
-        hint.setAlpha(1f);
-
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        lp.bottomMargin = dp(80);
-
-        rootFrame.addView(hint, lp);
-
-        new Handler(Looper.getMainLooper()).postDelayed(() ->
-                hint.animate()
-                        .alpha(0f)
-                        .setDuration(800)
-                        .withEndAction(() -> rootFrame.removeView(hint))
-                        .start(),
-                2000);
+        ui.snackbar(contentFrame, message, error);
     }
 
-    private int dp(int v)
+    /** Spring "look here" bounce for a row the user was jumped to. */
+    private void pop(View v)
     {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
+        Motion.set(v, View.SCALE_X, Motion.PRESS_SCALE);
+        Motion.set(v, View.SCALE_Y, Motion.PRESS_SCALE);
+        Motion.animate(v, View.SCALE_X, 1f, Motion.FLING);
+        Motion.animate(v, View.SCALE_Y, 1f, Motion.FLING);
     }
 }

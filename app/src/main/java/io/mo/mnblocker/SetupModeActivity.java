@@ -5,36 +5,24 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
-import android.view.Gravity;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
 
 /**
  * First-launch mode picker: root (Xposed hook, silent block) vs. root-free
  * (NotificationListenerService, notification briefly flashes then is
  * cancelled). See docs/rootfree-mode-plan.md §5.
  *
- * 100% programmatic views (no XML / AndroidX / Material / RecyclerView),
- * matching the other screens' style ({@code cardLayout()}-shaped cards,
- * {@code baseButton()}-shaped buttons) but self-contained like
- * BlockedNotificationsActivity — this activity has no access to
- * MainActivity's private helpers.
+ * Built from {@link Ui} like every other screen.
  */
 public final class SetupModeActivity extends Activity
 {
-    private static final int COLOR_BG = 0xFFF6F7FB;
-    private static final int COLOR_CARD = 0xFFFFFFFF;
-    private static final int COLOR_TEXT = 0xFF172033;
-    private static final int COLOR_SUB = 0xFF6D7484;
-    private static final int COLOR_LINE = 0xFFE7EAF0;
-    private static final int COLOR_PRIMARY = 0xFF3F6DF6;
+    private static final int APP_ICON_DP = 64;
+
+    private Ui ui;
 
     @Override
     protected void attachBaseContext(Context newBase)
@@ -46,97 +34,56 @@ public final class SetupModeActivity extends Activity
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
+        ui = new Ui(this);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(COLOR_BG);
+        Ui.Page page = ui.page();
+        LinearLayout root = page.content;
+        root.setPadding(root.getPaddingLeft(), ui.dp(Ui.S6),
+                root.getPaddingRight(), root.getPaddingBottom());
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(24), dp(16), dp(24));
-        scroll.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.app_icon);
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        root.addView(icon, ui.margins(ui.size(APP_ICON_DP, APP_ICON_DP), Ui.S1, Ui.S4, 0, 0));
 
-        TextView title = new TextView(this);
-        title.setText(getString(R.string.setup_title));
-        title.setTextSize(22);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setTextColor(COLOR_TEXT);
-        root.addView(title);
+        root.addView(ui.largeTitle(getString(R.string.setup_title),
+                getString(R.string.setup_subtitle), null));
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText(getString(R.string.setup_subtitle));
-        subtitle.setTextSize(13);
-        subtitle.setTextColor(COLOR_SUB);
-        subtitle.setPadding(0, dp(8), 0, dp(20));
-        root.addView(subtitle);
-
+        // Root is the full-strength path (silent, complete), so it carries the
+        // filled button; root-free is the fallback and gets the tonal one.
         root.addView(modeCard(
                 getString(R.string.setup_root_title),
                 getString(R.string.setup_root_desc),
                 getString(R.string.setup_choose_root),
-                RegexConfig.MODE_ROOT));
+                RegexConfig.MODE_ROOT, Ui.BTN_PRIMARY));
 
         root.addView(modeCard(
                 getString(R.string.setup_rootfree_title),
                 getString(R.string.setup_rootfree_desc),
                 getString(R.string.setup_choose_rootfree),
-                RegexConfig.MODE_ROOTFREE));
+                RegexConfig.MODE_ROOTFREE, Ui.BTN_TONAL));
 
-        setContentView(scroll);
-        SystemBars.edgeToEdge(this, scroll, root, root);
+        setContentView(page.scroll);
+        SystemBars.edgeToEdge(this, page.scroll, root, root);
     }
 
-    private LinearLayout modeCard(String title, String desc, String buttonText, String mode)
+    private LinearLayout modeCard(String title, String desc, String buttonText,
+                                  String mode, int buttonKind)
     {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(roundBg(COLOR_CARD, dp(20)));
-        card.setElevation(dp(2));
-        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        cardLp.bottomMargin = dp(14);
-        card.setLayoutParams(cardLp);
+        LinearLayout card = ui.card();
+        card.setPadding(ui.dp(Ui.S5), ui.dp(Ui.S5), ui.dp(Ui.S5), ui.dp(Ui.S5));
 
-        TextView t = new TextView(this);
-        t.setText(title);
-        t.setTextSize(17);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        t.setTextColor(COLOR_TEXT);
-        card.addView(t);
+        card.addView(ui.text(title, Ui.Type.TITLE, ui.p.onSurface));
+        card.addView(ui.text(desc, Ui.Type.BODY_SMALL, ui.p.onSurfaceVariant),
+                ui.margins(Ui.matchWrap(), 0, Ui.S2, 0, 0));
 
-        View divider = new View(this);
-        divider.setBackgroundColor(COLOR_LINE);
-        LinearLayout.LayoutParams dividerLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 1);
-        dividerLp.topMargin = dp(10);
-        dividerLp.bottomMargin = dp(10);
-        card.addView(divider, dividerLp);
-
-        TextView d = new TextView(this);
-        d.setText(desc);
-        d.setTextSize(13);
-        d.setTextColor(COLOR_SUB);
-        d.setLineSpacing(dp(2), 1.0f);
-        card.addView(d);
-
-        Button button = new Button(this);
-        button.setText(buttonText);
-        button.setAllCaps(false);
-        button.setTextSize(14);
-        button.setTypeface(Typeface.DEFAULT_BOLD);
-        button.setTextColor(0xFFFFFFFF);
-        button.setBackground(roundBg(COLOR_PRIMARY, dp(14)));
-        button.setGravity(Gravity.CENTER);
-        button.setMinHeight(0);
-        button.setOnClickListener(v -> selectMode(mode));
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
-        btnLp.topMargin = dp(14);
-        card.addView(button, btnLp);
-
+        Button button = ui.button(buttonKind, buttonText);
+        button.setOnClickListener(v ->
+        {
+            Haptics.confirm(v);
+            selectMode(mode);
+        });
+        card.addView(button, ui.margins(Ui.matchWrap(), 0, Ui.S4, 0, 0));
         return card;
     }
 
@@ -198,18 +145,5 @@ public final class SetupModeActivity extends Activity
     {
         startActivity(new Intent(this, MainActivity.class));
         finish();
-    }
-
-    private GradientDrawable roundBg(int color, int radius)
-    {
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(color);
-        gd.setCornerRadius(radius);
-        return gd;
-    }
-
-    private int dp(int v)
-    {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 }

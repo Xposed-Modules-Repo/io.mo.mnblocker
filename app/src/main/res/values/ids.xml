@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View tag holding Motion's per-property springs. -->
+    <item name="motion_springs" type="id" />
+    <!-- The snackbar currently shown in a host, so a newer one can replace it. -->
+    <item name="snackbar" type="id" />
+</resources>

@@ -6,28 +6,23 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
 import android.text.TextUtils;
 import android.text.TextWatcher;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import java.text.Collator;
 import java.util.ArrayList;
@@ -54,18 +49,15 @@ import java.util.regex.Pattern;
  */
 public final class WhitelistActivity extends Activity
 {
-    private static final int COLOR_BG = 0xFFF6F7FB;
-    private static final int COLOR_CARD = 0xFFFFFFFF;
-    private static final int COLOR_TEXT = 0xFF172033;
-    private static final int COLOR_SUB = 0xFF6D7484;
-    private static final int COLOR_LINE = 0xFFE7EAF0;
-    private static final int COLOR_PRIMARY = 0xFF3F6DF6;
-    private static final int COLOR_DANGER = 0xFFC62828;
-
     /** Quiet period after the last keystroke before the app list is re-filtered. */
     private static final long SEARCH_DEBOUNCE_MS = 150;
+    /** Height of the picker's scrolling list inside its dialog. */
+    private static final int PICKER_LIST_DP = 380;
 
+    private Ui ui;
+    private FrameLayout rootFrame;
     private EditText allowInput;
+    private Button addButton;
     private LinearLayout appListContainer;
     private final Set<String> appWhitelist = new LinkedHashSet<>();
     private final Collator zhCollator = Collator.getInstance(Locale.CHINA);
@@ -80,56 +72,22 @@ public final class WhitelistActivity extends Activity
     protected void onCreate(Bundle savedInstanceState)
     {
         super.onCreate(savedInstanceState);
+        ui = new Ui(this);
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(COLOR_BG);
+        rootFrame = new FrameLayout(this);
+        Ui.Page page = ui.page();
+        LinearLayout root = page.content;
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16), dp(18), dp(16), dp(20));
-        scroll.addView(root, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        root.addView(header());
+        root.addView(ui.topBar(getString(R.string.whitelist_title), null, null));
         root.addView(allowCard());
         root.addView(appCard());
-        setContentView(scroll);
-        SystemBars.edgeToEdge(this, scroll, root, root);
+
+        rootFrame.addView(page.scroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(rootFrame);
+        SystemBars.edgeToEdge(this, rootFrame, root, root);
 
         loadCurrent();
-    }
-
-    /** In-page title, replacing the platform ActionBar this screen used to show. */
-    private View header()
-    {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, dp(6), 0, dp(16));
-
-        TextView back = new TextView(this);
-        back.setText("‹");
-        back.setTextSize(30);
-        back.setTextColor(COLOR_TEXT);
-        back.setGravity(Gravity.CENTER);
-        back.setContentDescription(getString(R.string.nav_back));
-        back.setClickable(true);
-        back.setOnClickListener(v -> finish());
-        row.addView(back, new LinearLayout.LayoutParams(dp(40), dp(40)));
-
-        TextView title = new TextView(this);
-        title.setText(getString(R.string.whitelist_title));
-        title.setTextSize(22);
-        title.setTextColor(COLOR_TEXT);
-        title.setTypeface(Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.leftMargin = dp(6);
-        row.addView(title, lp);
-        return row;
     }
 
     // ------------------------------------------------------------------
@@ -138,33 +96,16 @@ public final class WhitelistActivity extends Activity
 
     private View allowCard()
     {
-        LinearLayout card = cardLayout();
-        card.addView(sectionTitle(getString(R.string.allow_card_title),
+        LinearLayout card = ui.card();
+        card.addView(ui.sectionTitle(getString(R.string.allow_card_title),
                 getString(R.string.allow_card_desc)));
 
-        allowInput = new EditText(this);
-        allowInput.setMinLines(4);
-        allowInput.setGravity(Gravity.TOP | Gravity.START);
-        allowInput.setTextSize(13);
-        allowInput.setTextColor(COLOR_TEXT);
-        allowInput.setHint(getString(R.string.allow_hint));
-        allowInput.setHintTextColor(0xFFB0B6C3);
-        allowInput.setPadding(dp(12), dp(12), dp(12), dp(12));
-        allowInput.setBackground(roundStrokeBg(Color.WHITE, dp(14), COLOR_LINE, 1));
-        allowInput.setOnFocusChangeListener((v, hasFocus) -> {
-            if (hasFocus) {
-                v.postDelayed(() -> v.requestRectangleOnScreen(
-                        new android.graphics.Rect(0, 0, v.getWidth(), v.getHeight()), true), 150);
-            }
-        });
-        card.addView(allowInput);
+        allowInput = ui.field(getString(R.string.allow_hint), 4, true);
+        card.addView(allowInput, Ui.matchWrap());
 
-        Button save = primaryButton(getString(R.string.action_save_allow));
+        Button save = ui.button(Ui.BTN_PRIMARY, getString(R.string.action_save_allow));
         save.setOnClickListener(v -> onSaveAllow());
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
-        lp.topMargin = dp(12);
-        card.addView(save, lp);
+        card.addView(save, ui.margins(Ui.matchWrap(), 0, Ui.S3, 0, 0));
         return card;
     }
 
@@ -173,17 +114,27 @@ public final class WhitelistActivity extends Activity
         String bad = firstInvalidRegex(allowInput.getText().toString());
         if (bad != null)
         {
-            Toast.makeText(this, getString(R.string.toast_regex_invalid_fmt, bad), Toast.LENGTH_LONG).show();
+            ui.markError(allowInput);
+            ui.snackbar(rootFrame, getString(R.string.toast_regex_invalid_fmt, bad), true);
             return;
         }
         // persist() reports success unconditionally in root-free mode (nothing to
         // sync), so the success string has to be picked by mode here — reusing the
         // root one claimed it had synced to a hook that does not exist.
         final boolean rf = rootFree();
-        persist(ok -> Toast.makeText(this,
-                ok ? getString(rf ? R.string.toast_saved_rootfree : R.string.toast_saved_synced)
-                        : getString(R.string.toast_allow_save_partial),
-                Toast.LENGTH_LONG).show());
+        persist(ok -> report(ok,
+                getString(rf ? R.string.toast_saved_rootfree : R.string.toast_saved_synced),
+                getString(R.string.toast_allow_save_partial)));
+    }
+
+    /** Outcome of a save: confirm haptic + message, or the error message. */
+    private void report(boolean ok, String success, String failure)
+    {
+        if (ok)
+        {
+            Haptics.confirm(rootFrame);
+        }
+        ui.snackbar(rootFrame, ok ? success : failure, !ok);
     }
 
     // ------------------------------------------------------------------
@@ -192,26 +143,25 @@ public final class WhitelistActivity extends Activity
 
     private View appCard()
     {
-        LinearLayout card = cardLayout();
-        card.addView(sectionTitle(getString(R.string.app_card_title),
+        LinearLayout card = ui.card();
+        card.addView(ui.sectionTitle(getString(R.string.app_card_title),
                 getString(R.string.app_card_desc)));
 
-        Button add = primaryButton(getString(R.string.action_add_app));
-        add.setOnClickListener(v -> onAddApp());
-        LinearLayout.LayoutParams addLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(46));
-        addLp.bottomMargin = dp(8);
-        card.addView(add, addLp);
+        addButton = ui.button(Ui.BTN_TONAL, getString(R.string.action_add_app));
+        addButton.setOnClickListener(v -> onAddApp());
+        card.addView(addButton, ui.margins(Ui.matchWrap(), 0, 0, 0, Ui.S3));
 
-        appListContainer = new LinearLayout(this);
-        appListContainer.setOrientation(LinearLayout.VERTICAL);
+        appListContainer = ui.column();
         card.addView(appListContainer);
         return card;
     }
 
     private void onAddApp()
     {
-        Toast.makeText(this, getString(R.string.toast_loading_apps), Toast.LENGTH_SHORT).show();
+        // The installed-app scan takes a moment; the button says so by going
+        // inert rather than by a toast that may outlive it.
+        Ui.setEnabledLook(addButton, false);
+        addButton.setText(getString(R.string.toast_loading_apps));
         new Thread(() ->
         {
             final PackageManager pm = getPackageManager();
@@ -244,7 +194,16 @@ public final class WhitelistActivity extends Activity
                     return c != 0 ? c : a[1].compareToIgnoreCase(b[1]);
                 }
             });
-            runOnUiThread(() -> showPicker(items));
+            runOnUiThread(() ->
+            {
+                if (isFinishing())
+                {
+                    return;
+                }
+                Ui.setEnabledLook(addButton, true);
+                addButton.setText(getString(R.string.action_add_app));
+                showPicker(items);
+            });
         }).start();
     }
 
@@ -258,32 +217,21 @@ public final class WhitelistActivity extends Activity
         final Set<String> picked = new LinkedHashSet<>(appWhitelist);
         final List<String[]> shown = new ArrayList<>(items);
 
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(20), dp(8), dp(20), 0);
+        LinearLayout box = ui.column();
+        box.setPadding(ui.dp(Ui.S5), ui.dp(Ui.S2), ui.dp(Ui.S5), 0);
 
-        EditText search = new EditText(this);
-        search.setHint(getString(R.string.picker_search_hint));
-        search.setHintTextColor(0xFFB0B6C3);
-        search.setTextColor(COLOR_TEXT);
-        search.setTextSize(14);
-        search.setSingleLine(true);
-        search.setPadding(dp(12), dp(10), dp(12), dp(10));
-        search.setBackground(roundStrokeBg(Color.WHITE, dp(12), COLOR_LINE, 1));
-        box.addView(search, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        final EditText search = ui.searchField(getString(R.string.picker_search_hint));
+        box.addView(search, Ui.matchWrap());
 
-        final TextView empty = new TextView(this);
-        empty.setText(getString(R.string.picker_no_match));
-        empty.setTextColor(COLOR_SUB);
-        empty.setTextSize(13);
-        empty.setGravity(Gravity.CENTER);
-        empty.setPadding(0, dp(24), 0, dp(24));
+        final View empty = ui.emptyState(R.drawable.ic_apps,
+                getString(R.string.picker_no_match), 0);
         empty.setVisibility(View.GONE);
         box.addView(empty);
 
         final ListView list = new ListView(this);
+        list.setDivider(null);
+        list.setSelector(ui.ripple(ui.shape(android.graphics.Color.TRANSPARENT, Ui.R_SMALL),
+                Ui.R_SMALL));
         final BaseAdapter adapter = new BaseAdapter()
         {
             @Override
@@ -315,16 +263,16 @@ public final class WhitelistActivity extends Activity
         list.setOnItemClickListener((parent, view, position, id) ->
         {
             String pkg = shown.get(position)[1];
-            if (!picked.remove(pkg))
+            boolean nowPicked = !picked.remove(pkg);
+            if (nowPicked)
             {
                 picked.add(pkg);
             }
+            Haptics.toggle(view, nowPicked);
             adapter.notifyDataSetChanged();
         });
-        LinearLayout.LayoutParams listLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(380));
-        listLp.topMargin = dp(8);
-        box.addView(list, listLp);
+        box.addView(list, ui.margins(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ui.dp(PICKER_LIST_DP)), 0, Ui.S2, 0, 0));
 
         // Debounced: a rescan re-binds every visible row, so running one per
         // keystroke made typing lag on devices with a few hundred apps installed.
@@ -373,10 +321,9 @@ public final class WhitelistActivity extends Activity
                     appWhitelist.clear();
                     appWhitelist.addAll(picked);
                     renderAppList(); // optimistic — the save reports back below
-                    persist(ok -> Toast.makeText(this,
-                            ok ? getString(R.string.toast_app_whitelist_saved_fmt, appWhitelist.size())
-                                    : getString(R.string.toast_app_whitelist_save_failed),
-                            Toast.LENGTH_SHORT).show());
+                    persist(ok -> report(ok,
+                            getString(R.string.toast_app_whitelist_saved_fmt, appWhitelist.size()),
+                            getString(R.string.toast_app_whitelist_save_failed)));
                 })
                 .setNegativeButton(getString(R.string.action_cancel), null)
                 .show();
@@ -387,14 +334,8 @@ public final class WhitelistActivity extends Activity
         appListContainer.removeAllViews();
         if (appWhitelist.isEmpty())
         {
-            TextView empty = new TextView(this);
-            empty.setText(getString(R.string.app_whitelist_empty));
-            empty.setTextSize(12);
-            empty.setTextColor(COLOR_SUB);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(14), dp(20), dp(14), dp(20));
-            empty.setBackground(roundStrokeBg(0xFFF8FAFF, dp(16), COLOR_LINE, 1));
-            appListContainer.addView(empty);
+            appListContainer.addView(ui.emptyState(R.drawable.ic_apps,
+                    getString(R.string.app_whitelist_empty), ui.p.surfaceVariant));
             return;
         }
         for (String pkg : appWhitelist)
@@ -413,35 +354,23 @@ public final class WhitelistActivity extends Activity
         }
         else
         {
-            row = new LinearLayout(this);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(4), dp(10), dp(4), dp(10));
+            row = ui.row();
+            row.setMinimumHeight(ui.dp(Ui.ROW_MIN));
+            row.setPadding(ui.dp(Ui.S1), ui.dp(Ui.S2), ui.dp(Ui.S1), ui.dp(Ui.S2));
 
             ImageView icon = new ImageView(this);
-            LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(36), dp(36));
-            iconLp.rightMargin = dp(12);
-            row.addView(icon, iconLp);
+            icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            row.addView(icon, ui.margins(ui.size(Ui.APP_ICON, Ui.APP_ICON), 0, 0, Ui.S3, 0));
 
-            LinearLayout text = new LinearLayout(this);
-            text.setOrientation(LinearLayout.VERTICAL);
-            text.setLayoutParams(new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-            TextView name = new TextView(this);
-            name.setTextSize(14);
-            name.setTextColor(COLOR_TEXT);
-            text.addView(name);
-
-            TextView meta = new TextView(this);
-            meta.setTextSize(10);
-            meta.setTextColor(COLOR_SUB);
+            LinearLayout text = ui.column();
+            text.addView(ui.text("", Ui.Type.BODY, ui.p.onSurface));
+            TextView meta = ui.text("", Ui.Type.CAPTION, ui.p.onSurfaceVariant);
             meta.setSingleLine(true);
             meta.setEllipsize(TextUtils.TruncateAt.MIDDLE);
             text.addView(meta);
-            row.addView(text);
+            row.addView(text, Ui.fillRow());
 
-            CheckBox box = new CheckBox(this);
+            CheckBox box = ui.checkBox();
             // The row itself handles the toggle; a focusable child would swallow it.
             box.setClickable(false);
             box.setFocusable(false);
@@ -458,72 +387,35 @@ public final class WhitelistActivity extends Activity
 
     private View appRow(final String pkg)
     {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(12), dp(10), dp(10), dp(10));
-        row.setBackground(roundStrokeBg(Color.WHITE, dp(16), COLOR_LINE, 1));
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.bottomMargin = dp(8);
-        row.setLayoutParams(rowLp);
+        LinearLayout row = ui.row();
+        row.setMinimumHeight(ui.dp(Ui.ROW_MIN));
+        row.setPadding(ui.dp(Ui.S3), ui.dp(Ui.S2), ui.dp(Ui.S2), ui.dp(Ui.S2));
+        row.setBackground(ui.shape(ui.p.surfaceVariant, Ui.R_MEDIUM));
+        row.setLayoutParams(ui.margins(Ui.matchWrap(), 0, 0, 0, Ui.S2));
 
-        LinearLayout text = new LinearLayout(this);
-        text.setOrientation(LinearLayout.VERTICAL);
-        text.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        ImageView icon = new ImageView(this);
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        AppIconCache.bindIcon(this, icon, pkg);
+        row.addView(icon, ui.margins(ui.size(Ui.APP_ICON, Ui.APP_ICON), 0, 0, Ui.S3, 0));
 
-        TextView name = new TextView(this);
-        name.setText(appLabel(pkg));
-        name.setTextSize(14);
-        name.setTextColor(COLOR_TEXT);
-        name.setTypeface(Typeface.DEFAULT_BOLD);
-        text.addView(name);
-
-        TextView meta = new TextView(this);
-        meta.setText(pkg);
-        meta.setTextSize(10);
-        meta.setTextColor(COLOR_SUB);
+        LinearLayout text = ui.column();
+        text.addView(ui.text(AppIconCache.label(this, pkg), Ui.Type.TITLE_SMALL, ui.p.onSurface));
+        TextView meta = ui.text(pkg, Ui.Type.CAPTION, ui.p.onSurfaceVariant);
         meta.setSingleLine(true);
         meta.setEllipsize(TextUtils.TruncateAt.END);
-        meta.setPadding(0, dp(3), 0, 0);
-        text.addView(meta);
-        row.addView(text);
+        text.addView(meta, ui.margins(Ui.matchWrap(), 0, Ui.S_HALF, 0, 0));
+        row.addView(text, Ui.fillRow());
 
-        Button remove = new Button(this);
-        remove.setText(getString(R.string.action_remove));
-        remove.setAllCaps(false);
-        remove.setTextSize(12);
-        remove.setTypeface(Typeface.DEFAULT_BOLD);
-        remove.setTextColor(Color.WHITE);
-        remove.setBackground(roundBg(COLOR_DANGER, dp(12)));
-        remove.setPadding(dp(12), 0, dp(12), 0);
+        Button remove = ui.button(Ui.BTN_DANGER, getString(R.string.action_remove));
         remove.setOnClickListener(v ->
         {
+            Haptics.confirm(v);
             appWhitelist.remove(pkg);
             renderAppList();
             persist(null);
         });
-        row.addView(remove, new LinearLayout.LayoutParams(dp(64), dp(40)));
+        row.addView(remove, ui.margins(Ui.wrapWrap(), Ui.S2, 0, 0, 0));
         return row;
-    }
-
-    private String appLabel(String pkg)
-    {
-        try
-        {
-            PackageManager pm = getPackageManager();
-            CharSequence l = pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0));
-            if (l != null && l.length() > 0)
-            {
-                return l.toString();
-            }
-        }
-        catch (Throwable ignored)
-        {
-        }
-        return pkg;
     }
 
     // ------------------------------------------------------------------
@@ -548,6 +440,8 @@ public final class WhitelistActivity extends Activity
             return;
         }
 
+        // Skeleton until the su read lands, so the list does not flash "empty".
+        appListContainer.addView(ui.skeletonBlock(Ui.ROW_MIN));
         Bg.load(this, ConfigFileStore::readForApp, disk ->
                 applyLoadedState(
                         disk.hasValue ? disk.allowRules : prefAllow,
@@ -673,81 +567,5 @@ public final class WhitelistActivity extends Activity
             }
         }
         return null;
-    }
-
-    // ------------------------------------------------------------------
-    // style helpers (self-contained, same look as the other screens)
-    // ------------------------------------------------------------------
-
-    private LinearLayout cardLayout()
-    {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(16), dp(16), dp(16));
-        card.setBackground(roundBg(COLOR_CARD, dp(22)));
-        card.setElevation(dp(2));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(14);
-        card.setLayoutParams(lp);
-        return card;
-    }
-
-    private View sectionTitle(String title, String desc)
-    {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(0, 0, 0, dp(12));
-
-        TextView t = new TextView(this);
-        t.setText(title);
-        t.setTextSize(17);
-        t.setTextColor(COLOR_TEXT);
-        t.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(t);
-
-        TextView d = new TextView(this);
-        d.setText(desc);
-        d.setTextSize(12);
-        d.setTextColor(COLOR_SUB);
-        d.setPadding(0, dp(4), 0, 0);
-        box.addView(d);
-        return box;
-    }
-
-    private Button primaryButton(String text)
-    {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextSize(13);
-        b.setTypeface(Typeface.DEFAULT_BOLD);
-        b.setGravity(Gravity.CENTER);
-        b.setMinHeight(0);
-        b.setMinWidth(0);
-        b.setTextColor(Color.WHITE);
-        b.setBackground(roundBg(COLOR_PRIMARY, dp(14)));
-        return b;
-    }
-
-    private GradientDrawable roundBg(int color, int radius)
-    {
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(color);
-        gd.setCornerRadius(radius);
-        return gd;
-    }
-
-    private GradientDrawable roundStrokeBg(int color, int radius, int strokeColor, int strokeWidth)
-    {
-        GradientDrawable gd = roundBg(color, radius);
-        gd.setStroke(strokeWidth, strokeColor);
-        return gd;
-    }
-
-    private int dp(int v)
-    {
-        return (int) (v * getResources().getDisplayMetrics().density + 0.5f);
     }
 }

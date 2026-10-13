@@ -31,8 +31,12 @@ final class SystemBars {
     static void edgeToEdge(Activity activity, View root, View topTarget, View bottomTarget) {
         Window w = activity.getWindow();
         w.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        // The theme's windowBackground is the static palette's; with dynamic colour
+        // the page bg differs, and the window shows through during resize / IME.
+        w.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                Palette.of(activity).bg));
         applyDecorFlags(w);
-        applyLightBars(w);
+        applyBarAppearance(w, !Palette.isDark(activity));
 
         final int baseTop = topTarget.getPaddingTop();
         final int baseBottom = bottomTarget.getPaddingBottom();
@@ -108,26 +112,28 @@ final class SystemBars {
         }
     }
 
-    /** The app background is light, so clock and pill have to be drawn dark. */
+    /**
+     * Light page => clock and pill drawn dark, and the reverse in dark mode.
+     * Set explicitly rather than trusting the theme alone: some ROMs restore the
+     * bar appearance from the previous activity on a light/dark switch.
+     */
     @SuppressWarnings("deprecation")
-    private static void applyLightBars(Window w) {
+    private static void applyBarAppearance(Window w, boolean lightPage) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             WindowInsetsController c = w.getInsetsController();
             if (c != null) {
-                int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                int mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
                         | WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-                c.setSystemBarsAppearance(light, light);
+                c.setSystemBarsAppearance(lightPage ? mask : 0, mask);
             }
             return;
         }
         View decor = w.getDecorView();
-        int vis = decor.getSystemUiVisibility();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            vis |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-        }
+        int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vis |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
         }
-        decor.setSystemUiVisibility(vis);
+        int vis = decor.getSystemUiVisibility();
+        decor.setSystemUiVisibility(lightPage ? (vis | flags) : (vis & ~flags));
     }
 }
