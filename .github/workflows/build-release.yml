@@ -1,14 +1,18 @@
 name: Build release APK
 
-# Push a tag shaped <versionCode>-<versionName> (e.g. 11-1.2.6) to build, test,
-# sign and attach the APK to a DRAFT release. Write the notes and click
-# Publish yourself: that publish (by you, not by this workflow's token) is what
-# fires release-sync.yml and mirrors the release to Xposed-Modules-Repo.
+# Every push to any branch: test, build and sign the APK, and keep it as a
+# downloadable build artifact (Actions → the run → Artifacts). No release.
 #
-# Run it manually (Actions → Run workflow) to get a signed APK as a build
-# artifact without touching releases.
+# Push a tag shaped <versionCode>-<versionName> (e.g. 11-1.2.6) to also attach
+# the APK to a DRAFT release. Write the notes and click Publish yourself: that
+# publish (by you, not by this workflow's token) is what fires release-sync.yml
+# and mirrors the release to Xposed-Modules-Repo.
+#
+# Can also be run by hand (Actions → Run workflow); same as a branch push.
 on:
   push:
+    branches:
+      - '**'
     tags:
       - '[0-9]+-*'
   workflow_dispatch: {}
@@ -16,9 +20,11 @@ on:
 permissions:
   contents: write
 
+# Back-to-back pushes to a branch: only the newest commit's build matters, so
+# an older in-flight one is cancelled. A tag build (release) is never cancelled.
 concurrency:
   group: build-release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 jobs:
   build:
@@ -55,6 +61,7 @@ jobs:
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "tag=$code-$name" >> "$GITHUB_OUTPUT"
+          echo "sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "Version: $name ($code)"
 
       - name: Tag must match the version in build.gradle
@@ -112,7 +119,9 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-${{ steps.ver.outputs.tag }}
+          # Branch builds carry the commit, so two pushes at the same version
+          # are told apart; a tag build is just the version.
+          name: app-release-${{ steps.ver.outputs.tag }}${{ github.ref_type != 'tag' && format('-{0}', steps.ver.outputs.sha) || '' }}
           path: ${{ env.APK }}
           if-no-files-found: error
 
